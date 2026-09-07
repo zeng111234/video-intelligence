@@ -1,0 +1,17 @@
+{
+  "asset_id": "sfx-impact-soft-local",
+  "kind": "sound_effect",
+  "name": "impact_soft",
+  "stored_name": "sfx-boom.wav",
+  "media_type": "audio/wav",
+  "source_provider": "VideoInsight",
+  "source_type": "project_local_asset",
+  "asset_origin": "project_owned_local_generated_asset",
+  "rights_holder": "VideoInsight project",
+  "authorization_status": "confirmed",
+  "rights_status": "project_owned_local_generated",
+  "publish_licensed": true,
+  "license_name": "Project-owned local generated audio",
+  "source_url": "",
+  "sha256": "438ff2e2be7992980f0f852fa47f86a6f87420ac4b7a2dfc8576a01806ec34a1"
+}

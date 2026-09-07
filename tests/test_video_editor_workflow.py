@@ -31,6 +31,7 @@ from src.services.video_editor_workflow import (
 )
 import src.services.video_editor_workflow as workflow_module
 import src.services.style_presets as style_presets_module
+import src.services.video_editor_cloud as cloud_module
 
 
 def test_visual_gate_policy_is_template_adaptive() -> None:
@@ -66,6 +67,52 @@ def test_local_grammar_v2_is_a_roll_first_and_does_not_require_broll() -> None:
     assert policy["full_required"] is False
     assert policy["min_camera_events"] == 1
     assert policy["min_symbol_events"] == 1
+
+
+def test_grammar_symbols_stay_out_of_the_upper_right_corner() -> None:
+    rendered = workflow_module.VideoEditorWorkflowService._local_rhythm_video_filter(
+        duration_seconds=12.0,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.08,
+        subtitle_filter="",
+        motion_items=[
+            {
+                "start": 2.0,
+                "end": 3.0,
+                "style_id": "grammar_green_check",
+            }
+        ],
+        source_width=720,
+        source_height=1280,
+    )
+
+    assert "x='W-w-42'" in rendered
+    assert "trunc(H*0.60-h/2)" in rendered
+    assert "trunc(H*0.12-h/2)" not in rendered
+
+
+def test_grammar_negative_mark_is_not_duplicated_by_editorial_sticker() -> None:
+    events = workflow_module._clean_grammar_motion_events(
+        [
+            {
+                "type": "semantic_symbol",
+                "style_id": "grammar_red_x",
+                "start": 10.0,
+                "end": 11.5,
+                "source_segment_index": 4,
+            },
+            {
+                "type": "semantic_sticker",
+                "style_id": "editorial_negative",
+                "start": 10.0,
+                "end": 11.5,
+                "source_segment_index": 4,
+            },
+        ]
+    )
+    assert [item["style_id"] for item in events] == ["editorial_negative"]
 
 
 def test_frozen_media_manifest_is_read_next_to_bundled_tools(
@@ -357,6 +404,23 @@ def test_adaptive_reframe_events_count_as_camera_beats_once() -> None:
     assert gate["passed"] is True
     assert gate["meaningful_visual_beat_count"] == 6
     assert gate["routine_subtitle_refresh_counted"] is False
+
+
+def test_sparse_a_roll_degradation_does_not_fail_on_one_sentence_hold() -> None:
+    gate = workflow_module._visual_cadence_gate(
+        duration_seconds=96.9,
+        brolls=[],
+        vector_items=[],
+        subtitle_preview={"cues": [{"start": float(index), "end": float(index + 1), "emphasis_style": {"scale": 1.08}} for index in range(5)]},
+        has_hook=True,
+        a_roll_shots=[],
+        reframe_events=[],
+        playback_rate=1.0,
+        allow_safe_a_roll_degradation=True,
+    )
+
+    assert gate["passed"] is True
+    assert gate["safe_degradation_allowed"] is True
 
 
 def test_effective_visual_coverage_uses_non_overlapping_rendered_events() -> None:
@@ -667,6 +731,23 @@ def test_local_rhythm_filter_uses_complete_source_timeline_with_safe_reframe():
     assert "subtitles='approved.ass'" in rendered
 
 
+def test_local_rhythm_filter_can_use_clean_hard_cuts_for_grammar_routes():
+    rendered = VideoEditorWorkflowService._local_rhythm_video_filter(
+        duration_seconds=24.0,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        source_width=960,
+        source_height=720,
+        clean_hard_cuts=True,
+    )
+
+    assert "concat=n=5:v=1:a=0" in rendered
+    assert "xfade=transition=" not in rendered
+
+
 def test_local_rhythm_filter_fits_portrait_source_without_foreground_crop():
     rendered = VideoEditorWorkflowService._local_rhythm_video_filter(
         duration_seconds=8.0,
@@ -718,7 +799,46 @@ def test_subtitle_sound_effects_are_delayed_to_semantic_beats():
     assert "adelay=8000|8000" in rendered[1]
 
 
-def test_local_sound_effect_library_is_bound_when_asset_exists():
+def test_sparse_sfx_selector_covers_the_timeline_without_duplicate_segments():
+    selected = workflow_module._select_sparse_sfx_items(
+        [
+            {
+                "start": 18.0,
+                "end": 19.0,
+                "source_segment_index": 3,
+                "semantic_role": "POSITIVE",
+                "sfx_profile": "success_ping",
+            }
+        ],
+        [
+            {"start": 1.0, "end": 2.0, "source_segment_index": 0, "importance": 0.88},
+            {"start": 8.0, "end": 9.0, "source_segment_index": 1, "importance": 0.90},
+            {"start": 28.0, "end": 29.0, "source_segment_index": 4, "importance": 0.92},
+            {"start": 42.0, "end": 43.0, "source_segment_index": 5, "importance": 0.84},
+            {"start": 56.0, "end": 57.0, "source_segment_index": 6, "importance": 0.82},
+        ],
+        duration_seconds=60.0,
+        target_count=6,
+    )
+
+    starts = [float(item["start"]) for item in selected]
+    assert starts[0] == pytest.approx(1.0)
+    assert starts[-1] >= 42.0
+    assert all(right - left >= 2.8 for left, right in zip(starts, starts[1:]))
+    assert len(
+        [item.get("source_segment_index") for item in selected]
+    ) == len({item.get("source_segment_index") for item in selected})
+
+
+def test_local_sound_effect_library_is_bound_when_asset_exists(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.setattr(workflow_module, "_SFX_LIBRARY_DIR", tmp_path)
+    path = tmp_path / "sfx-boom.wav"
+    path.write_bytes(b"test-audio")
+    path.with_suffix(".json").write_text(json.dumps({
+        "authorization_status": "confirmed", "license_name": "project-generated",
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }), encoding="utf-8")
     item = {"start": 2.4, "end": 3.4, "style_id": "number_slam"}
     asset = workflow_module._resolve_local_sound_effect(item, event_index=0)
 
@@ -2410,6 +2530,33 @@ def test_release_filter_supports_multiple_pip_and_full_visual_events(
     assert rendered.index("subtitles='approved.ass'") > rendered.index("[with_broll1]")
 
 
+def test_sparse_pip_has_editorial_entry_animation_without_card_border(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        brolls=[{"start": 1.0, "end": 3.0, "mode": "pip", "input_index": 2}],
+        pip_layout="sparse",
+    )
+
+    assert "scale=w='trunc(187*(0.90+0.10*min(1,t/0.220))/2)*2'" in rendered
+    assert "color=c=black@0.0:s=187x167" in rendered
+    assert "fade=t=in:st=0:d=0.220:alpha=1" in rendered
+    assert "setpts=PTS+1.000/TB[broll]" in rendered
+    assert "drawbox=x=1:y=1" not in rendered
+
+
 def test_pip_geometry_avoids_face_and_subtitle_and_skips_unsafe_canvas(
     tmp_path: Path,
 ):
@@ -2713,6 +2860,54 @@ def test_local_title_candidates_keep_unfamiliar_script_topic():
     assert titles
     assert len(titles) <= 3
     assert "便民服务模式" in titles[0]
+
+
+def test_grammar_hook_title_is_short_complete_and_transcript_grounded():
+    hook = VideoEditorWorkflowService._grammar_hook_title(
+        "本地上传 · 陌生视频.mp4",
+        "最近上海出现了一种特别的社区服务模式，用户可以按步骤完成预约。",
+    )
+
+    assert 6 <= len(hook) <= 14
+    assert "上海" in hook
+    assert any(term in hook for term in ("社区服务", "服务模式"))
+    assert "…" not in hook
+
+
+def test_sparse_pip_geometry_alternates_safe_sides():
+    right = workflow_module._sparse_pip_geometry(720, 1280, variant=0)
+    left = workflow_module._sparse_pip_geometry(720, 1280, variant=1)
+
+    assert right["safe"] and left["safe"]
+    assert right["bbox"]["left"] > left["bbox"]["left"]
+    assert right["bbox"]["right"] > left["bbox"]["right"]
+    assert not right["intersects_face_safe_bbox"]
+    assert not left["intersects_subtitle_bbox"]
+    assert left["bbox"]["left"] / 720 < 0.02
+    assert right["bbox"]["right"] / 720 > 0.98
+    assert left["bbox"]["top"] / 1280 == pytest.approx(0.49, abs=0.01)
+
+
+def test_caption_emphasis_preserves_a_late_semantic_payoff():
+    cues = [
+        {
+            "start": float(index * 5),
+            "end": float(index * 5 + 2),
+            "lines": ["这是一段可读的口播"],
+            "emphasis_range": {"line_index": 0, "start": 0, "end": 2},
+            "emphasis_style": {"style_id": "test"},
+            "semantic_role": "KEY_CLAIM",
+            "semantic_importance": 0.8,
+            "source_segment_index": index,
+        }
+        for index in range(19)
+    ]
+    cues[-1]["semantic_role"] = "CTA"
+    cloud_module._apply_adaptive_caption_effects(cues)
+
+    emphasized = [cue for cue in cues if cue.get("emphasis_range")]
+    assert len(emphasized) <= 17
+    assert emphasized[-1]["semantic_role"] == "CTA"
 
 
 def test_authorized_bgm_is_added_to_batch_render(

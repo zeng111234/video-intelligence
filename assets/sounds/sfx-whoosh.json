@@ -1,0 +1,17 @@
+{
+  "asset_id": "sfx-whoosh-soft-local",
+  "kind": "sound_effect",
+  "name": "whoosh_soft",
+  "stored_name": "sfx-whoosh.wav",
+  "media_type": "audio/wav",
+  "source_provider": "VideoInsight",
+  "source_type": "project_local_asset",
+  "asset_origin": "project_owned_local_generated_asset",
+  "rights_holder": "VideoInsight project",
+  "authorization_status": "confirmed",
+  "rights_status": "project_owned_local_generated",
+  "publish_licensed": true,
+  "license_name": "Project-owned local generated audio",
+  "source_url": "",
+  "sha256": "915fa894f920efb4eed7d581f0c75a9bd2ed42b1bfbbb0d5a66930f813803b84"
+}

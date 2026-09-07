@@ -346,6 +346,7 @@ def visual_style_spec(
     rhythm: dict[str, Any] = {}
     emphasis_palette: dict[str, Any] = {}
     caption_overrides: dict[str, Any] = {}
+    title_overrides: dict[str, Any] = {}
     top_brand_header: Any = None
     big_emphasis_layer: Any = None
     preset_id = DEFAULT_VISUAL_STYLE_ID
@@ -370,6 +371,13 @@ def visual_style_spec(
                 for key, value in caption_raw.items()
                 if value is not None
             }
+        title_raw = style_preset.get("title")
+        if isinstance(title_raw, Mapping):
+            title_overrides = {
+                str(key): value
+                for key, value in title_raw.items()
+                if value is not None
+            }
         if style_preset.get("top_brand_header") is not None:
             top_brand_header = style_preset.get("top_brand_header")
         if style_preset.get("big_emphasis_layer") is not None:
@@ -392,6 +400,37 @@ def visual_style_spec(
             subtitle_style[key] = max(0, round(float(value) * scale))
         elif key in subtitle_style:
             subtitle_style[key] = value
+    title_style = {
+        "visible_seconds": 2.5,
+        "fade_in_ms": 0,
+        "fade_out_ms": 0,
+        "max_lines": 1,
+        "max_chars_per_line": 12,
+        "font_family": "Source Han Serif CN Heavy",
+        "render_mode": "png_watermark",
+        "font_size": round(44 * scale),
+        "line_height": 1.1,
+        "safe_top": round(84 * scale),
+        "safe_left": round(30 * scale),
+        "asset_width": round(660 * scale),
+        "asset_height": round(72 * scale),
+        "outline_width": max(1, round(1 * scale)),
+        "shadow": max(1, round(1 * scale)),
+        "color": "#FFFFFF",
+    }
+    for key, value in title_overrides.items():
+        if key in {
+            "font_size",
+            "safe_top",
+            "safe_left",
+            "asset_width",
+            "asset_height",
+            "outline_width",
+            "shadow",
+        }:
+            title_style[key] = max(0, round(float(value) * scale))
+        elif key in title_style:
+            title_style[key] = value
     return {
         # ``style_id`` stays byte-identical with the pre-preset contract so
         # downstream consumers (review manifest, render manifest) that read
@@ -402,24 +441,7 @@ def visual_style_spec(
         "preset_id": preset_id if isinstance(style_preset, Mapping) else None,
         "playback_rate": playback_rate,
         "canvas": {"width": width, "height": height, "pixel_aspect_ratio": "1:1"},
-        "title": {
-            "visible_seconds": 2.5,
-            "fade_in_ms": 0,
-            "fade_out_ms": 0,
-            "max_lines": 1,
-            "max_chars_per_line": 12,
-            "font_family": "Source Han Serif CN Heavy",
-            "render_mode": "png_watermark",
-            "font_size": round(44 * scale),
-            "line_height": 1.1,
-            "safe_top": round(84 * scale),
-            "safe_left": round(30 * scale),
-            "asset_width": round(660 * scale),
-            "asset_height": round(72 * scale),
-            "outline_width": max(1, round(1 * scale)),
-            "shadow": max(1, round(1 * scale)),
-            "color": "#FFFFFF",
-        },
+        "title": title_style,
         "accent": {
             "color": "transparent",
             "width": 0,
@@ -454,6 +476,7 @@ def build_business_talking_head_title_png(
     *,
     output_profile: str | "OutputProfile",
     font_path: str | Path = BRAND_TITLE_FONT_PATH,
+    style_preset: Mapping[str, Any] | None = None,
 ) -> bytes:
     """Render the approved brand title as a transparent MPS image watermark."""
 
@@ -465,13 +488,24 @@ def build_business_talking_head_title_png(
     font_file = Path(font_path)
     if not font_file.is_file():
         raise CloudEditorError("品牌标题字体文件缺失，不能提交正式出片。")
-    spec = visual_style_spec(output_profile)
+    spec = visual_style_spec(output_profile, style_preset=style_preset)
     title_style = spec["title"]
-    lines = _display_lines(
-        title,
-        chars_per_line=title_style["max_chars_per_line"],
-        max_lines=title_style["max_lines"],
-        truncate=True,
+    grammar_title = isinstance(style_preset, Mapping) and (
+        style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY"
+    )
+    lines = (
+        _title_display_lines(
+            title,
+            chars_per_line=title_style["max_chars_per_line"],
+            max_lines=int(title_style["max_lines"]),
+        )
+        if grammar_title
+        else _display_lines(
+            title,
+            chars_per_line=title_style["max_chars_per_line"],
+            max_lines=title_style["max_lines"],
+            truncate=True,
+        )
     )
     if not lines:
         raise CloudEditorError("标题不能为空。")
@@ -480,13 +514,20 @@ def build_business_talking_head_title_png(
     height = int(title_style["asset_height"])
     font_size = int(title_style["font_size"])
     scale = spec["canvas"]["width"] / 720
+    text_x = round(8 * scale)
+    text_y = round(2 * scale)
+    if grammar_title:
+        max_text_width = max(1, width - text_x * 2)
+        while font_size > 20:
+            candidate_font = ImageFont.truetype(str(font_file), font_size)
+            if all(candidate_font.getlength(line) <= max_text_width for line in lines):
+                break
+            font_size -= 1
     font = ImageFont.truetype(str(font_file), font_size)
     image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     shadow_layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow_layer)
     line_step = round(font_size * float(title_style["line_height"]))
-    text_x = round(8 * scale)
-    text_y = round(2 * scale)
     shadow_offset = max(1, round(2 * scale))
     for index, line in enumerate(lines):
         y = text_y + index * line_step
@@ -565,6 +606,31 @@ def _display_lines(
                 break
         clean = clean[:cutoff]
     return _caption_wrap_lines(clean, chars_per_line=chars_per_line)
+
+
+def _title_display_lines(
+    text: str,
+    *,
+    chars_per_line: int,
+    max_lines: int,
+) -> list[str]:
+    """Wrap complete title text without silently clipping its tail."""
+
+    clean = re.sub(r"\s+", "", text)
+    if not clean:
+        return []
+    line_limit = max(1, int(max_lines))
+    wrapped = _caption_wrap_lines(clean, chars_per_line=max(1, int(chars_per_line)))
+    if len(wrapped) <= line_limit:
+        return wrapped
+    # Titles are short labels. If an unusually long one exceeds the normal
+    # width, keep all content in the allowed number of lines; the PNG renderer
+    # reduces the font size to make these complete lines fit.
+    chunk_size = math.ceil(len(clean) / line_limit)
+    return [
+        clean[index : min(len(clean), index + chunk_size)]
+        for index in range(0, len(clean), chunk_size)
+    ][:line_limit]
 
 
 def _caption_wrap_lines(text: str, *, chars_per_line: int) -> list[str]:
@@ -2019,6 +2085,8 @@ class CaptionEmphasis(BaseModel):
     segment_index: int = Field(ge=0)
     term: str = Field(min_length=1, max_length=6)
     kind: str = "keyword"
+    semantic_role: str = ""
+    importance: float = Field(default=0.0, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _validate_kind(self) -> CaptionEmphasis:
@@ -2287,6 +2355,7 @@ def validated_caption_emphasis(
     segments: Sequence[Mapping[str, Any]],
     *,
     caption_groups: object = None,
+    max_items: int | None = None,
 ) -> list[CaptionEmphasis]:
     """Keep sparse emphasis terms only when they are exact source substrings."""
 
@@ -2334,7 +2403,11 @@ def validated_caption_emphasis(
             return []
         accepted.append(item.model_copy(update={"term": term}))
         seen_segments.add(item.segment_index)
-    density_limit = max(1, math.ceil(len(expected) / 3))
+    density_limit = (
+        max(1, int(max_items))
+        if max_items is not None
+        else max(1, math.ceil(len(expected) / 3))
+    )
     return accepted[:density_limit]
 
 
@@ -2450,7 +2523,11 @@ _CAPTION_WORD_MOTION_KINDS = {
 }
 
 
-def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
+def _apply_adaptive_caption_effects(
+    cues: list[dict[str, Any]],
+    *,
+    grammar_mode: bool = False,
+) -> None:
     """Apply a short sentence entrance with sparse semantic accents.
 
     Every cue gets one elastic entrance and then becomes static.  The stronger
@@ -2509,18 +2586,58 @@ def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
         (float(cue.get("end") or 0) for cue in cues),
         default=0.0,
     )
-    # Give a one-minute talking-head clip up to five strong beats.  Ordinary
-    # cues remain static; this only prevents a long video from looking flat
-    # after the heavy shadow was removed.
-    total_budget = max(1, math.ceil(max_end / 60 * 5))
-    bucket_limit = 5
+    # Give a one-minute talking-head clip up to ten semantic keyword beats.
+    # This is a subtitle layer, so it can be denser than symbols or SFX while
+    # remaining bounded and temporally spaced.
+    # The grammar renderer has transcript-grounded candidates for every
+    # semantic segment.  Its previous 10/minute cap left long edits looking
+    # like plain white captions after the opening.  Allow a denser but still
+    # bounded editorial rhythm only for that explicitly opted-in mode; the
+    # ordinary adaptive renderer keeps its historical cap.
+    total_budget = max(
+        1,
+        math.ceil(max_end / 60 * (14 if grammar_mode else 10)),
+    )
+    # The candidate list is already grounded and one-per-segment.  Do not let
+    # an arbitrary time bucket discard a later result or CTA beat; the
+    # temporal spacing guard below remains the actual density limiter.
+    bucket_limit = total_budget
+
+    def has_planned_semantics(cue: Mapping[str, Any]) -> bool:
+        if str(cue.get("semantic_role") or "").strip():
+            return True
+        try:
+            return float(cue.get("semantic_importance") or 0) > 0
+        except (TypeError, ValueError):
+            return False
+
+    planned_emphasized = [
+        (index, cue) for index, cue in emphasized if has_planned_semantics(cue)
+    ]
+    # Automatic lexical guesses are only a fallback for legacy plans.  When
+    # the current plan contains semantic annotations, they must not displace
+    # a grounded result/product/CTA beat merely because of cue ordering.
+    candidate_emphasized = planned_emphasized or emphasized
 
     def emphasis_priority(item: tuple[int, Mapping[str, Any]]) -> tuple[int, int]:
         index, cue = item
         text = _caption_display_cleanup(
             "".join(str(line) for line in cue.get("lines") or [])
         )
-        score = 0
+        role = str(cue.get("semantic_role") or "").upper()
+        try:
+            importance = max(0.0, min(1.0, float(cue.get("semantic_importance") or 0)))
+        except (TypeError, ValueError):
+            importance = 0.0
+        score = importance * 10
+        if role in {
+            "HOOK", "KEY_CLAIM", "NUMBER", "PRICE", "PERCENT", "WARNING",
+            "NEGATIVE", "POSITIVE", "CONCLUSION", "COMPARISON", "STEP",
+            "PROCESS", "EXAMPLE", "CTA", "PRODUCT",
+        }:
+            score += 3
+        elif role in {"LOW_INFORMATION", "TRANSITION"}:
+            score -= 2
         if re.search(r"\d", text):
             score += 5
         if any(term in text for term in ("但是", "不过", "所以", "关键", "重点", "风险", "结论")):
@@ -2531,7 +2648,27 @@ def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
 
     selected: list[int] = []
     selected_buckets: dict[int, int] = {}
-    for index, cue in sorted(emphasized, key=emphasis_priority):
+    def has_temporal_gap(index: int, cue: Mapping[str, Any]) -> bool:
+        try:
+            start = float(cue.get("start") or 0)
+        except (TypeError, ValueError):
+            return False
+        for previous_index in selected:
+            previous = cues[previous_index]
+            try:
+                previous_start = float(previous.get("start") or 0)
+            except (TypeError, ValueError):
+                continue
+            if abs(start - previous_start) < 1.8:
+                return False
+            if (
+                cue.get("source_segment_index") is not None
+                and cue.get("source_segment_index") == previous.get("source_segment_index")
+            ):
+                return False
+        return True
+
+    for index, cue in sorted(candidate_emphasized, key=emphasis_priority):
         if len(selected) >= total_budget:
             break
         try:
@@ -2540,14 +2677,14 @@ def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
             bucket = 0
         if selected_buckets.get(bucket, 0) >= bucket_limit:
             continue
-        if all(abs(index - previous) >= 2 for previous in selected):
+        if has_temporal_gap(index, cue):
             selected.append(index)
             selected_buckets[bucket] = selected_buckets.get(bucket, 0) + 1
     if len(selected) < total_budget:
-        for index, cue in emphasized:
+        for index, cue in candidate_emphasized:
             if len(selected) >= total_budget:
                 break
-            if index in selected or any(abs(index - previous) < 2 for previous in selected):
+            if index in selected or not has_temporal_gap(index, cue):
                 continue
             try:
                 bucket = max(0, int(float(cue.get("start") or 0) // 60))
@@ -2557,6 +2694,77 @@ def _apply_adaptive_caption_effects(cues: list[dict[str, Any]]) -> None:
                 continue
             selected.append(index)
             selected_buckets[bucket] = selected_buckets.get(bucket, 0) + 1
+
+    # Preserve one late semantic payoff when the priority sort has already
+    # consumed the whole budget with early cues.  This is role-driven rather
+    # than text-driven: a final CTA, result, product, quantity, or claim must
+    # remain visible even in a long transcript, while ordinary filler keeps
+    # the normal density cap.
+    late_roles = {
+        "CTA", "CONCLUSION", "PRODUCT", "NUMBER", "PRICE", "PERCENT",
+        "KEY_CLAIM", "WARNING", "NEGATIVE",
+    }
+    late_cutoff = max_end * 0.72
+    late_candidates = [
+        (index, cue)
+        for index, cue in candidate_emphasized
+        if str(cue.get("semantic_role") or "").upper() in late_roles
+        and float(cue.get("start") or 0) >= late_cutoff
+    ]
+    def late_priority(item: tuple[int, Mapping[str, Any]]) -> tuple[int, int, int]:
+        _index, cue = item
+        # A CTA is the closing semantic payoff when present; keep it ahead of
+        # an equally strong late claim without depending on its wording.
+        role_priority = 0 if str(cue.get("semantic_role") or "").upper() == "CTA" else 1
+        base = emphasis_priority(item)
+        return (role_priority, base[0], base[1])
+
+    for late_index, late_cue in sorted(late_candidates, key=late_priority):
+        if late_index in selected:
+            continue
+        # A late CTA often follows the preceding product/result phrase by
+        # about one subtitle beat. Replace that lower-priority neighbour
+        # instead of dropping the CTA solely because of the spacing guard.
+        try:
+            late_start = float(late_cue.get("start") or 0)
+        except (TypeError, ValueError):
+            continue
+        conflicting = []
+        for previous_index in selected:
+            previous = cues[previous_index]
+            try:
+                previous_start = float(previous.get("start") or 0)
+            except (TypeError, ValueError):
+                continue
+            if (
+                abs(late_start - previous_start) < 1.8
+                or (
+                    late_cue.get("source_segment_index") is not None
+                    and late_cue.get("source_segment_index")
+                    == previous.get("source_segment_index")
+                )
+            ):
+                conflicting.append(previous_index)
+        if conflicting:
+            selected.remove(
+                max(
+                    conflicting,
+                    key=lambda item: emphasis_priority((item, cues[item])),
+                )
+            )
+        if not has_temporal_gap(late_index, late_cue):
+            continue
+        if len(selected) >= total_budget:
+            weakest_index = max(
+                selected,
+                key=lambda item: emphasis_priority((
+                    item,
+                    cues[item],
+                )),
+            )
+            selected.remove(weakest_index)
+        selected.append(late_index)
+        break
     selected_set = set(selected)
     for index, cue in emphasized:
         if index not in selected_set:
@@ -2996,11 +3204,22 @@ def build_business_talking_head_overlay_preview(
     title_style = spec["title"]
     caption_style = spec["subtitle"]
     normalized_caption_glossary = _normalize_caption_glossary(caption_glossary)
-    title_lines = _display_lines(
-        title,
-        chars_per_line=title_style["max_chars_per_line"],
-        max_lines=title_style["max_lines"],
-        truncate=True,
+    grammar_title = isinstance(style_preset, Mapping) and (
+        style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY"
+    )
+    title_lines = (
+        _title_display_lines(
+            title,
+            chars_per_line=title_style["max_chars_per_line"],
+            max_lines=int(title_style["max_lines"]),
+        )
+        if grammar_title
+        else _display_lines(
+            title,
+            chars_per_line=title_style["max_chars_per_line"],
+            max_lines=title_style["max_lines"],
+            truncate=True,
+        )
     )
     cues: list[dict[str, Any]] = []
     # Group by the single-line phone width.  The renderer may still wrap an
@@ -3016,10 +3235,18 @@ def build_business_talking_head_overlay_preview(
     semantic_parts = {
         group.segment_index: list(group.parts) for group in semantic_groups
     }
+    grammar_emphasis_budget = None
+    if isinstance(style_preset, Mapping) and style_preset.get(
+        "grammar_mode"
+    ) == "JY_CLONE_GRAMMAR_ONLY":
+        # Grammar-only receives one grounded candidate per semantic segment;
+        # the later time-based renderer still supplies the final visual cap.
+        grammar_emphasis_budget = max(1, math.ceil(len(segments) / 2))
     approved_emphasis = validated_caption_emphasis(
         caption_emphasis,
         segments,
         caption_groups=semantic_groups,
+        max_items=grammar_emphasis_budget,
     )
     emphasis_by_segment = {item.segment_index: item for item in approved_emphasis}
     for segment_index, segment in enumerate(segments):
@@ -3369,6 +3596,16 @@ def build_business_talking_head_overlay_preview(
                         )
                         if emphasis is not None
                         else None
+                    ),
+                    "semantic_role": (
+                        ai_emphasis.semantic_role
+                        if active_ai_term and ai_emphasis is not None
+                        else ""
+                    ),
+                    "semantic_importance": (
+                        ai_emphasis.importance
+                        if active_ai_term and ai_emphasis is not None
+                        else 0.0
                     ),
                     "_segment_index": segment_index,
                     "source_segment_index": segment_index,
@@ -3798,7 +4035,7 @@ def build_business_talking_head_overlay_preview(
     else:
         for cue in cues:
             cue.pop("_segment_index", None)
-    _apply_adaptive_caption_effects(cues)
+    _apply_adaptive_caption_effects(cues, grammar_mode=grammar_title)
     _apply_caption_kinetic_words(
         cues,
         segments,

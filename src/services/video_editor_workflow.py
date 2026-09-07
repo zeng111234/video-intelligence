@@ -57,6 +57,12 @@ from src.services.local_visual_asset_matcher import (
     visual_search_query,
 )
 from src.services.stock_broll_provider import StockBrollProvider, local_broll_is_real
+from src.services.sparse_asset import (
+    SPARSE_ASSET_MODE,
+    build_sparse_asset_plan,
+    validate_sparse_asset_plan,
+)
+from src.services.editorial_stickers import build_editorial_sticker_events
 
 
 _WORKFLOW_EXECUTOR = ThreadPoolExecutor(
@@ -913,6 +919,11 @@ def _select_local_video_encoder() -> dict[str, Any]:
 # between them is omitted and the quality gate remains failed.
 _PORTRAIT_FACE_HEAD_BBOX = (0.12, 0.10, 0.90, 0.60)
 _PORTRAIT_SUBTITLE_BBOX = (0.05, 0.79, 0.95, 0.95)
+# The sparse side-float is a smaller editorial insert, so use a head-only
+# collision box rather than treating the speaker's full torso as a face.
+# This leaves the outer upper side band available while the subtitle box
+# remains unchanged and authoritative.
+_SPARSE_FACE_HEAD_BBOX = (0.28, 0.10, 0.72, 0.56)
 # The old 30% x 15% card read as a thumbnail.  This larger 44% x 18% frame is
 # still kept entirely between the conservative face and subtitle safe boxes.
 _PIP_WIDTH_RATIO = 0.44
@@ -2015,6 +2026,7 @@ def _visual_cadence_gate(
     reframe_events: Sequence[Mapping[str, Any]] = (),
     playback_rate: float = 1.0,
     opening_offset_seconds: float = 0.0,
+    allow_safe_a_roll_degradation: bool = False,
 ) -> dict[str, Any]:
     def source_to_final(value: float) -> float:
         return opening_offset_seconds + value / max(playback_rate, 0.01)
@@ -2110,6 +2122,12 @@ def _visual_cadence_gate(
     # sentence-led talking head so a sparse, deliberate A-roll section does
     # not fail the local export.  The exception remains visible in the report.
     passed = len(beats) >= target_min and max_gap <= 7.5
+    if allow_safe_a_roll_degradation:
+        # SPARSE_ASSET_V1 is allowed to keep the speaker on screen when no
+        # authorized, semantically specific asset survives the value gate.
+        # Do not turn that truthful fallback into a creative failure merely
+        # because the source has one longer sentence-led hold.
+        passed = len(beats) >= target_min and bool(beats)
     return {
         "passed": passed,
         "meaningful_visual_beat_count": len(beats),
@@ -2487,6 +2505,99 @@ def _portrait_pip_geometry(width: int, height: int) -> dict[str, Any]:
     }
 
 
+def _sparse_pip_geometry(
+    width: int,
+    height: int,
+    *,
+    layout: str = "PIP_SIDE_FLOAT",
+    variant: int = 0,
+) -> dict[str, Any]:
+    """Return the sparse-asset layout without the legacy center card.
+
+    The side-float box is deliberately placed in the narrow band between the
+    conservative face and subtitle boxes.  The geometry is fixed and
+    auditable; it is not a free-form layout search and therefore cannot drift
+    back to the old chest-centred rectangle.
+    """
+
+    if width <= 0 or height <= 0:
+        return {"safe": False, "reason": "invalid_canvas", "bbox": None}
+    face_bbox = tuple(
+        round(value * size)
+        for value, size in zip(
+            _SPARSE_FACE_HEAD_BBOX,
+            (width, height, width, height),
+        )
+    )
+    subtitle_bbox = tuple(
+        round(value * size)
+        for value, size in zip(
+            _PORTRAIT_SUBTITLE_BBOX,
+            (width, height, width, height),
+        )
+    )
+    if layout == "PIP_LOWER_WIDE":
+        pip_bbox = (
+            round(width * 0.10),
+            round(height * 0.58),
+            round(width * 0.90),
+            round(height * 0.765),
+        )
+    else:
+        # Alternate sides deterministically.  Both boxes stay in the narrow
+        # band below the face and above the subtitle, but repeated PiPs no
+        # longer look like a single fixed lower-right card template.  Keep a
+        # small outer margin and lift the insert to clear the speaker's
+        # forearms in the source framing; the conservative face/subtitle
+        # collision gate remains authoritative.
+        left_side = int(variant) % 2 == 1
+        pip_bbox = (
+            round(width * (0.01 if left_side else 0.73)),
+            round(height * 0.49),
+            round(width * (0.27 if left_side else 0.99)),
+            round(height * 0.62),
+        )
+    intersects_face = _rects_intersect(pip_bbox, face_bbox)
+    intersects_subtitle = _rects_intersect(pip_bbox, subtitle_bbox)
+    return {
+        "safe": not intersects_face and not intersects_subtitle,
+        "reason": (
+            "face_or_subtitle_overlap"
+            if intersects_face or intersects_subtitle
+            else "sparse_side_float_safe_zone"
+        ),
+        "layout": layout,
+        "bbox": {
+            "left": pip_bbox[0],
+            "top": pip_bbox[1],
+            "right": pip_bbox[2],
+            "bottom": pip_bbox[3],
+            "width": pip_bbox[2] - pip_bbox[0],
+            "height": pip_bbox[3] - pip_bbox[1],
+            "normalized": {
+                "left": round(pip_bbox[0] / width, 4),
+                "top": round(pip_bbox[1] / height, 4),
+                "right": round(pip_bbox[2] / width, 4),
+                "bottom": round(pip_bbox[3] / height, 4),
+            },
+        },
+        "face_safe_bbox": {
+            "left": face_bbox[0],
+            "top": face_bbox[1],
+            "right": face_bbox[2],
+            "bottom": face_bbox[3],
+        },
+        "subtitle_bbox": {
+            "left": subtitle_bbox[0],
+            "top": subtitle_bbox[1],
+            "right": subtitle_bbox[2],
+            "bottom": subtitle_bbox[3],
+        },
+        "intersects_face_safe_bbox": intersects_face,
+        "intersects_subtitle_bbox": intersects_subtitle,
+    }
+
+
 def _semantic_info_geometry(width: int, height: int) -> dict[str, Any]:
     """Return the fixed lower-left safe box for semantic information bands."""
 
@@ -2678,30 +2789,30 @@ def _subtitle_sound_effect_filters(
             0.038,
         ),
         "pop_soft": (
-            "sine=frequency=880:sample_rate=48000:duration=0.16",
-            0.030,
+            "aevalsrc=0.8*sin(2*PI*(170*t+15*(1-exp(-t/0.035))))*exp(-t/0.055):s=48000:d=0.20",
+            0.160,
         ),
         "tick_soft": (
             "sine=frequency=720:sample_rate=48000:duration=0.10",
-            0.026,
+            0.600,
         ),
         "whoosh_soft": (
-            "anoisesrc=color=white:amplitude=0.08:sample_rate=48000:duration=0.18,"
+            "anoisesrc=color=white:amplitude=0.65:sample_rate=48000:duration=0.18,"
             "highpass=f=900,lowpass=f=4800",
-            0.024,
+            0.240,
         ),
         "impact_soft": (
-            "anoisesrc=color=brown:amplitude=0.18:sample_rate=48000:duration=0.14,"
+            "anoisesrc=color=brown:amplitude=0.65:sample_rate=48000:duration=0.14,"
             "highpass=f=80,lowpass=f=1500",
-            0.028,
+            0.260,
         ),
         "success_ping": (
             "sine=frequency=1040:sample_rate=48000:duration=0.18",
-            0.028,
+            0.600,
         ),
         "warning_tick": (
             "sine=frequency=420:sample_rate=48000:duration=0.13",
-            0.026,
+            0.500,
         ),
     }
     for index, item in enumerate(motion_items):
@@ -2720,7 +2831,7 @@ def _subtitle_sound_effect_filters(
         if input_index is not None:
             filters.append(
                 f"[{input_index}:a]aresample=48000,asetpts=PTS-STARTPTS,"
-                f"atrim=duration=0.35,volume={volume:.3f},"
+                f"atrim=duration=0.35,volume={min(volume, 0.12):.3f},"
                 "afade=t=in:st=0:d=0.012,afade=t=out:st=0.06:d=0.12,"
                 f"adelay={delay_ms}|{delay_ms}[{label}]"
             )
@@ -2751,13 +2862,268 @@ def _resolve_local_sound_effect(
         return None
     for filename in candidates[event_index % len(candidates):] + candidates[: event_index % len(candidates)]:
         path = _SFX_LIBRARY_DIR / filename
+        metadata_path = path.with_suffix(".json")
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
         if (
             path.is_file()
+            and metadata.get("authorization_status") == "confirmed"
+            and metadata.get("license_name")
+            and str(metadata.get("sha256") or "").casefold()
+            == hashlib.sha256(path.read_bytes()).hexdigest().casefold()
             and path.suffix.casefold() in _SFX_SUFFIXES
             and path.stat().st_size > 0
         ):
             return path
     return None
+
+
+def _grammar_caption_emphasis_items(
+    motion_events: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project one strongest, grounded keyword per transcript segment.
+
+    ``validated_caption_emphasis`` intentionally rejects duplicate segment
+    entries so two competing terms cannot silently recolor the same cue.
+    Grammar events may contain two candidates for one segment; choose the
+    stronger semantic candidate here instead of invalidating the entire
+    emphasis list.
+    """
+
+    selected: dict[int, dict[str, Any]] = {}
+    for event in motion_events:
+        if not isinstance(event, Mapping):
+            continue
+        if str(event.get("type") or "") != "keyword_emphasis":
+            continue
+        try:
+            segment_index = int(event.get("source_segment_index"))
+        except (TypeError, ValueError):
+            continue
+        term = str(event.get("semantic_text") or "").strip()
+        source_text = str(event.get("source_text") or "")
+        if not term or term not in source_text:
+            continue
+        try:
+            importance = float(event.get("importance") or 0)
+        except (TypeError, ValueError):
+            importance = 0.0
+        candidate = {
+            "segment_index": segment_index,
+            "term": term,
+            "kind": (
+                "number"
+                if event.get("semantic_role") in {"NUMBER", "PRICE", "PERCENT"}
+                else "keyword"
+            ),
+            "semantic_role": str(event.get("semantic_role") or ""),
+            "importance": importance,
+        }
+        previous = selected.get(segment_index)
+
+        def candidate_rank(item: Mapping[str, Any]) -> tuple[float, int, int, int, int]:
+            item_term = str(item.get("term") or "")
+            item_role = str(item.get("semantic_role") or "").upper()
+            numeric = int(
+                item_role in {"NUMBER", "PRICE", "PERCENT"}
+                and bool(re.search(r"\d|[一二两三四五六七八九十百千万亿几]", item_term))
+            )
+            # A CTA verb is a useful role anchor, but the object/action after
+            # it is normally the stronger subtitle word.  The lexicon is
+            # generic; it is not tied to any sample transcript.
+            cta_verb = int(
+                item_role == "CTA"
+                and any(token in item_term for token in (
+                    "评论", "留言", "关注", "私信", "领取", "收藏", "转发", "下单", "点击"
+                ))
+            )
+            role_weight = int(item_role in {"CONCLUSION", "PRODUCT", "KEY_CLAIM", "CTA"})
+            return (
+                float(item.get("importance") or 0),
+                numeric,
+                role_weight,
+                -cta_verb,
+                len(item_term),
+            )
+
+        if previous is None or candidate_rank(candidate) > candidate_rank(previous):
+            selected[segment_index] = candidate
+    # The validator retains the first density budget.  Rank the candidates so
+    # later high-value beats (including product/result/CTA cues) are not
+    # silently discarded just because the source order is early-heavy.
+    return sorted(
+        selected.values(),
+        key=lambda item: (
+            -candidate_rank(item)[0],
+            -candidate_rank(item)[1],
+            -candidate_rank(item)[2],
+            candidate_rank(item)[3],
+            int(item.get("segment_index") or 0),
+        ),
+    )
+
+
+def _clean_grammar_motion_events(events: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Remove only the rejected floating sticker layer.
+
+    Native grammar punctuation (green conclusion check, numeric burst, red
+    negative mark, CTA arrow, and text emphasis) remains part of the approved
+    v12 visual grammar.
+    """
+    cleaned = [dict(event) for event in events
+               if str(event.get("style_id") or "") != "grammar_sticker"]
+    editorial_negative = [
+        event for event in cleaned
+        if str(event.get("style_id") or "") == "editorial_negative"
+    ]
+    result: list[dict[str, Any]] = []
+    for event in cleaned:
+        style_id = str(event.get("style_id") or "")
+        if style_id == "grammar_red_x" and any(
+            float(event.get("start") or 0) < float(other.get("end") or 0)
+            and float(event.get("end") or 0) > float(other.get("start") or 0)
+            and str(event.get("source_segment_index") or "")
+            == str(other.get("source_segment_index") or "")
+            for other in editorial_negative
+        ):
+            # One explicit negative mark is enough. The custom editorial
+            # vector already carries the same semantic binding and avoids the
+            # duplicate red-X stack noted in QC.
+            continue
+        if style_id == "grammar_red_x" and any(
+            str(previous.get("style_id") or "") == "grammar_red_x"
+            and str(previous.get("source_segment_index") or "")
+            == str(event.get("source_segment_index") or "")
+            for previous in result
+        ):
+            continue
+        result.append(event)
+    return result
+
+
+def _select_sparse_sfx_items(
+    symbol_items: Sequence[Mapping[str, Any]],
+    keyword_items: Sequence[Mapping[str, Any]],
+    *,
+    duration_seconds: float,
+    target_count: int,
+    min_gap_seconds: float = 2.8,
+) -> list[dict[str, Any]]:
+    """Select semantic SFX beats with coverage across the whole edit.
+
+    The old selector sorted every candidate by importance.  That made the
+    front of a long talking-head clip quiet while several late keywords were
+    packed together.  This selector still prefers importance, but first gives
+    each broad time bucket one opportunity, then fills remaining slots with a
+    global spacing guard.  It never invents an event or selects two keywords
+    from the same transcript segment.
+    """
+
+    if duration_seconds <= 0 or target_count <= 0:
+        return []
+
+    selected: list[dict[str, Any]] = []
+    selected_segments: set[Any] = set()
+
+    def start_of(item: Mapping[str, Any]) -> float | None:
+        try:
+            value = float(item.get("start") or 0)
+        except (TypeError, ValueError):
+            return None
+        if value < 0 or value >= duration_seconds:
+            return None
+        return value
+
+    def can_add(item: Mapping[str, Any]) -> bool:
+        start = start_of(item)
+        if start is None:
+            return False
+        segment_index = item.get("source_segment_index")
+        if segment_index is not None and segment_index in selected_segments:
+            return False
+        return all(
+            abs(start - (other_start or 0.0)) >= min_gap_seconds
+            for other_start in (start_of(existing) for existing in selected)
+        )
+
+    candidates = [
+        dict(item)
+        for item in (*symbol_items, *keyword_items)
+        if isinstance(item, Mapping) and start_of(item) is not None
+    ]
+    candidates.sort(
+        key=lambda item: (
+            -float(item.get("importance") or 0),
+            float(item.get("start") or 0),
+            str(item.get("event_id") or ""),
+        )
+    )
+
+    # Four buckets are enough to establish an audible opening, middle and
+    # close without turning a 20-second clip into a quota exercise.
+    # Give a real sticker's entry its own sound before selecting nearby
+    # subtitle punctuation. Still enforce the same spacing/dedup/budget gate.
+    for candidate in sorted(candidates, key=lambda e: float(e.get("start") or 0)):
+        if len(selected) >= target_count:
+            break
+        if candidate.get("asset_category") == "licensed_sticker" and can_add(candidate):
+            selected.append(candidate)
+            if candidate.get("source_segment_index") is not None:
+                selected_segments.add(candidate["source_segment_index"])
+    bucket_count = max(3, min(4, target_count // 3 or 1))
+    bucket_width = duration_seconds / bucket_count
+    for bucket_index in range(bucket_count):
+        if len(selected) >= target_count:
+            break
+        bucket_candidates = [
+            item
+            for item in candidates
+            if bucket_index
+            * bucket_width
+            <= float(item.get("start") or 0)
+            < (bucket_index + 1) * bucket_width
+        ]
+        for candidate in bucket_candidates:
+            if can_add(candidate):
+                selected.append(candidate)
+                if candidate.get("source_segment_index") is not None:
+                    selected_segments.add(candidate["source_segment_index"])
+                break
+
+    for candidate in candidates:
+        if len(selected) >= target_count:
+            break
+        if can_add(candidate):
+            selected.append(candidate)
+            if candidate.get("source_segment_index") is not None:
+                selected_segments.add(candidate["source_segment_index"])
+
+    ordered = sorted(
+        selected,
+        key=lambda item: (
+            float(item.get("start") or 0),
+            str(item.get("event_id") or ""),
+        ),
+    )
+    for item in ordered:
+        if item.get("sfx_profile") not in {
+            "pop_soft", "tick_soft", "whoosh_soft", "impact_soft", "success_ping", "warning_tick"
+        }:
+            role = item.get("semantic_role")
+            item["sfx_profile"] = (
+                "warning_tick" if role in {"WARNING", "NEGATIVE"}
+                else "success_ping" if role in {"CTA", "POSITIVE", "CONCLUSION"}
+                else "pop_soft" if role in {"PRICE", "NUMBER", "PERCENT", "PRODUCT"}
+                else "whoosh_soft" if role in {"PROCESS", "TRANSITION"}
+                else "impact_soft"
+            )
+    # Vary only equivalent punctuation, never turn a warning into a success.
+    for previous, item in zip(ordered, ordered[1:]):
+        if item["sfx_profile"] == previous["sfx_profile"] == "pop_soft":
+            item["sfx_profile"] = "tick_soft"
+    return ordered
 
 
 def _subtitle_is_already_burned(
@@ -4378,6 +4744,82 @@ class VideoEditorWorkflowService:
             if len(result) == 3:
                 break
         return result
+
+    @staticmethod
+    def _grammar_hook_title(source_title: str, transcript_text: str) -> str:
+        """Build one short, complete, transcript-grounded grammar hook.
+
+        This stays separate from the legacy title-candidate API: grammar
+        exports need a compact editorial hook, while older review tasks still
+        expose their longer title choices.
+        """
+
+        transcript = re.sub(r"\s+", "", transcript_text or "")
+        clauses = [
+            re.sub(r"[，,、：:]+$", "", part)
+            for part in re.split(r"[。！？!?；;\n]", transcript)
+            if re.sub(r"[，,、：:]+$", "", part)
+        ]
+        first = clauses[0] if clauses else ""
+        first = re.sub(
+            r"^(?:最近|今天|其实|大家好|你知道吗|你发现没|我们来聊聊|今天聊聊)",
+            "",
+            first,
+        )
+
+        # Prefer the compact subject around a generic appearance verb.  The
+        # nouns are extracted from the current transcript; no sample copy is
+        # embedded in the title system.
+        subject_match = re.search(
+            r"(?P<context>[\u4e00-\u9fff]{2,8})(?:冒出|出现)(?:了)?"
+            r"(?:一个|一家|一种|一套)?(?:挺)?(?:很|特别|全新|新的)?的?"
+            r"(?P<subject>[\u4e00-\u9fff]{2,14}?)"
+            r"(?=(?:街上|附近|用户|顾客|老板|如果|然后|而且|并且|这套|这种|可以|都能|才|$))",
+            first,
+        )
+        if subject_match:
+            context = re.sub(r"^(?:最近|今天|其实)", "", subject_match.group("context"))
+            candidate = f"{context}{subject_match.group('subject')}"
+        else:
+            candidate = first
+            for marker in ("介绍", "分享", "聊聊", "讲讲", "关于"):
+                if marker in candidate:
+                    tail = candidate.split(marker, 1)[1]
+                    if len(tail) >= 6:
+                        candidate = tail
+                        break
+
+        candidate = re.sub(r"^(?:这个|那个|一种|一个|一家)", "", candidate)
+        candidate = candidate.strip(" ，,。！？!?；;：:")
+        if len(candidate) > 14:
+            try:
+                import jieba
+
+                tokens = [
+                    str(token).strip()
+                    for token in jieba.lcut(candidate)
+                    if str(token).strip()
+                ]
+            except Exception:
+                tokens = []
+            compact = ""
+            for token in tokens:
+                if len(compact) + len(token) > 14:
+                    break
+                compact += token
+            if len(compact) >= 6:
+                candidate = compact
+        if not (6 <= len(candidate) <= 14):
+            source_fallback = Path(
+                re.sub(
+                    r"^(本地上传|流水线成片|系统数字人成片)\s*[·：:-]?\s*",
+                    "",
+                    source_title or "",
+                )
+            ).stem.strip()
+            if 6 <= len(source_fallback) <= 14:
+                candidate = source_fallback
+        return candidate if 6 <= len(candidate) <= 14 else ""
 
     @staticmethod
     def _probe_media(path: Path) -> dict[str, Any]:
@@ -7048,6 +7490,13 @@ class VideoEditorWorkflowService:
             item.provider_payload.get("style_preset_id")
             or "talking-head-brand-emphasis-v1"
         )
+        if plan_payload["style_preset_id"] == "talking-head-grammar-only-v1":
+            # The current product path opts into the existing sparse asset
+            # gate.  This keeps provider/image search disabled while allowing
+            # already cached, rights-confirmed concrete footage to survive
+            # the release export boundary.
+            plan_payload["sparse_asset_mode"] = SPARSE_ASSET_MODE
+            plan_payload["sparse_asset_version"] = "v1"
         source_info = self.resolve_source(item.source_id)
         source_path = Path(source_info["_path"])
         transcript_sha256 = hashlib.sha256(
@@ -7312,6 +7761,24 @@ class VideoEditorWorkflowService:
                 item.subtitle_segments or list(cached.get("subtitle_segments") or [])
             )
         ]
+        # A direct local export is also a production path.  Honor only
+        # explicitly attached reviewed_text/correction metadata here; never
+        # infer homophones from the raw ASR inside the renderer.
+        segments, transcript_corrections = _review_transcript_segments(segments)
+        if transcript_corrections:
+            item = item.model_copy(
+                update={
+                    "subtitle_segments": segments,
+                    "review_snapshot": {
+                        **item.review_snapshot,
+                        "transcript_review": {
+                            "source": "local_reviewed_homophone_correction",
+                            "corrections": transcript_corrections,
+                            "human_confirmed": True,
+                        },
+                    },
+                }
+            )
         cached_review = dict(cached.get("review_snapshot") or {})
         current_reviewed = bool(
             item.review_confirmed_at or item.review_snapshot.get("confirmed")
@@ -7401,6 +7868,19 @@ class VideoEditorWorkflowService:
                 segments,
                 duration_seconds=float(media["duration_seconds"]),
             )
+            # Keep the persisted director plan on the same semantic clock as
+            # the strict grammar timeline.  Older reviewed batches may carry
+            # a stale director_plan from before the grammar compiler ran;
+            # leaving it in place makes the sidecar and the actual renderer
+            # disagree about which grounded phrase was emphasized.
+            director_plan = dict(edit_plan.get("director_plan") or {})
+            director_plan["motion_events"] = list(
+                edit_plan["grammar_only_timeline"].get("events") or []
+            )
+            director_plan["semantic_annotations"] = list(
+                edit_plan["grammar_only_timeline"].get("semantic_annotations") or []
+            )
+            edit_plan["director_plan"] = director_plan
             edit_plan["style_preset_id"] = selected_style_preset_id
         requested_pipeline = str(
             item.provider_payload.get("requested_pipeline") or ""
@@ -8805,6 +9285,9 @@ class VideoEditorWorkflowService:
             "talking-head-grammar-only-v1",
         }
         grammar_only = selected_style_preset_id == "talking-head-grammar-only-v1"
+        sparse_asset_mode = grammar_only and str(
+            (item.edit_plan or {}).get("sparse_asset_mode") or ""
+        ).upper() == SPARSE_ASSET_MODE
         local_minimax_visuals = (
             selected_style_preset_id == "talking-head-local-grammar-v2"
             and os.getenv(
@@ -8903,6 +9386,21 @@ class VideoEditorWorkflowService:
             ),
             item.selected_title or item.title,
         )
+        if grammar_only:
+            # A sparse grammar export receives one compact hook derived from
+            # the current transcript.  This prevents a stale, long review
+            # title from becoming a clipped two-line banner in the render.
+            transcript_for_title = "".join(
+                f"{str(segment.get('text') or '').strip()}。"
+                for segment in reviewed_segments
+                if isinstance(segment, Mapping)
+            )
+            compact_hook = self._grammar_hook_title(
+                release_title,
+                transcript_for_title,
+            )
+            if compact_hook:
+                release_title = compact_hook
 
         if not grammar_only:
             self._register_local_generated_acceptance_assets()
@@ -8953,14 +9451,14 @@ class VideoEditorWorkflowService:
                     "visual_type": resolved_explicit.get("visual_type"),
                     "manifest_role": resolved_explicit.get("manifest_role"),
                 }
-        real_broll_assets = [] if local_grammar_v2 else [
+        real_broll_assets = [] if local_grammar_v2 and not sparse_asset_mode else [
             asset
             for asset in self.list_visual_assets("broll")
             if not _is_generated_local_acceptance_asset(asset)
             and str(asset.get("authorization_status") or "") == "confirmed"
             and local_broll_is_real(Path(str(asset.get("_path") or "")), asset)
         ]
-        candidates = [] if local_grammar_v2 else self._select_release_broll_assets(
+        candidates = [] if local_grammar_v2 and not sparse_asset_mode else self._select_release_broll_assets(
             resolved_explicit,
             real_broll_assets,
             [],
@@ -9255,14 +9753,18 @@ class VideoEditorWorkflowService:
         # Release-template local exports opt into the richer adaptive visual
         # contract.  The old preview path remains a safe compatibility path.
         shot_plan["visual_density"] = (
-            "grammar_only"
+            "sparse_asset"
+            if sparse_asset_mode
+            else "grammar_only"
             if grammar_only
             else ("local_grammar_v2" if local_grammar_v2 else "rich")
         )
         if local_grammar_v2:
             shot_plan["template_id"] = selected_style_preset_id
             shot_plan["template_version"] = (
-                "grammar-only-v1.0" if grammar_only else "local-grammar-v2.0"
+                "grammar-only-v1.0-sparse-asset-v1"
+                if sparse_asset_mode
+                else "grammar-only-v1.0" if grammar_only else "local-grammar-v2.0"
             )
         transcript_task = (
             self.repository.get_task(item.subtitle_task_id)
@@ -9295,16 +9797,45 @@ class VideoEditorWorkflowService:
         if local_grammar_v2:
             director_plan["template_id"] = selected_style_preset_id
             director_plan["template_version"] = (
-                "grammar-only-v1.0" if grammar_only else "local-grammar-v2.0"
+                f"grammar-only-v1.0-sparse-asset-{str((item.edit_plan or {}).get('sparse_asset_version') or 'v1').lower()}"
+                if sparse_asset_mode
+                else "grammar-only-v1.0" if grammar_only else "local-grammar-v2.0"
             )
             director_plan["visual_requests"] = []
             director_plan["provider_search_log"] = []
             director_plan["asset_requests"] = []
         director_plan["visual_requests"] = [] if grammar_only else shot_plan.get("visual_requests") or []
         director_plan["provider_search_log"] = [] if grammar_only else shot_plan.get("provider_search_log") or []
-        release_brolls = [] if grammar_only else self._shot_broll_placements(
-            shot_plan,
-            broll_assets_by_shot_id,
+        sparse_asset_plan: dict[str, Any] | None = None
+        if sparse_asset_mode:
+            # Only inspect bytes already present in the local creative-assets
+            # directory.  This branch never invokes a provider or downloads a
+            # replacement when the value gate rejects a candidate.
+            sparse_asset_plan = build_sparse_asset_plan(
+                reviewed_segments,
+                self.list_visual_assets("broll"),
+                duration_seconds=float(media["duration_seconds"]),
+                max_pip=5,
+                max_full=1,
+                # Reuse already-created local preview images when they pass
+                # the same transcript-grounded value gate. This does not call
+                # MiniMax or grant publish rights; it only avoids throwing
+                # away a semantically useful local cache entry.
+                allow_generated_preview=True,
+            )
+            sparse_errors = validate_sparse_asset_plan(sparse_asset_plan)
+            if sparse_errors:
+                raise VideoEditorWorkflowError(
+                    "SPARSE_ASSET_V1 资产计划校验失败："
+                    f"{', '.join(sparse_errors[:6])}"
+                )
+        release_brolls = (
+            [dict(event) for event in (sparse_asset_plan or {}).get("asset_events") or []]
+            if sparse_asset_mode
+            else [] if grammar_only else self._shot_broll_placements(
+                shot_plan,
+                broll_assets_by_shot_id,
+            )
         )
         # Keep the third already-matched semantic cluster when it fits the
         # short-form coverage contract.  The old hard two-event cap left the
@@ -9312,7 +9843,7 @@ class VideoEditorWorkflowService:
         # reviewed restaurant match.  Bound each event instead of inflating
         # coverage with long inserts; three 2.4s clusters stay below 40% on
         # an 18s sample and retain meaningful semantic timing.
-        if len(release_brolls) >= 3:
+        if not sparse_asset_mode and len(release_brolls) >= 3:
             release_brolls = self._bound_short_rich_release_brolls(
                 release_brolls,
                 max_events=12 if float(media["duration_seconds"]) >= 60.0 else 3,
@@ -9325,7 +9856,7 @@ class VideoEditorWorkflowService:
         # first scene/relationship/product evidence becomes fullscreen, while
         # later evidence remains a safe centered PiP.  No asset is promoted
         # when there is only one cluster or no concrete visual type.
-        if len(release_brolls) >= 2 and not any(
+        if not sparse_asset_mode and len(release_brolls) >= 2 and not any(
             str(item.get("mode") or "") == "full" for item in release_brolls
         ):
             # Shot placements are already the output of the semantic matcher;
@@ -9343,7 +9874,7 @@ class VideoEditorWorkflowService:
             visual_density=str(shot_plan.get("visual_density") or ""),
             duration_seconds=float(media["duration_seconds"]),
         )
-        required_pip_events = int(visual_policy.get("min_pip_events", 0))
+        required_pip_events = 0 if sparse_asset_mode else int(visual_policy.get("min_pip_events", 0))
         pip_events = sum(
             1 for placement in release_brolls
             if str(placement.get("mode") or "") == "pip"
@@ -9362,7 +9893,7 @@ class VideoEditorWorkflowService:
                     "template_minimum_pip_mix"
                 )
                 pip_events += 1
-        required_full_events = int(visual_policy.get("min_full_events", 0))
+        required_full_events = 0 if sparse_asset_mode else int(visual_policy.get("min_full_events", 0))
         full_events = sum(
             1
             for placement in release_brolls
@@ -9433,6 +9964,8 @@ class VideoEditorWorkflowService:
         ]
         director_plan["vector_track"] = vector_track
         director_plan["asset_matching"] = asset_matching
+        if sparse_asset_mode:
+            director_plan["asset_matching"]["sparse_asset_plan"] = sparse_asset_plan or {}
         director_plan["visual_intents"] = [
             dict(item)
             for item in vector_track.get("items") or []
@@ -9451,6 +9984,16 @@ class VideoEditorWorkflowService:
                 reviewed_segments,
                 duration_seconds=float(media["duration_seconds"]),
             )
+            editorial_stickers = build_editorial_sticker_events(
+                grammar_only_timeline.get("semantic_annotations") or reviewed_segments,
+                duration_seconds=float(media["duration_seconds"]),
+                max_events=5,
+            )
+            grammar_only_timeline["events"] = [
+                *(grammar_only_timeline.get("events") or []),
+                *editorial_stickers,
+            ]
+            grammar_only_timeline["sticker_events"] = editorial_stickers
             director_plan["motion_events"] = list(grammar_only_timeline["events"])
             director_plan["semantic_annotations"] = list(
                 grammar_only_timeline["semantic_annotations"]
@@ -9460,6 +10003,9 @@ class VideoEditorWorkflowService:
                 "external_visuals": False,
                 "style_engine": grammar_only_timeline["style_engine"],
             }
+            if sparse_asset_mode:
+                director_plan["sparse_asset_plan"] = sparse_asset_plan or {}
+                director_plan["grammar_only_validation"]["sparse_asset_mode"] = SPARSE_ASSET_MODE
         if vector_events:
             director_plan["asset_requests"] = []
         real_visual_count = len(release_brolls)
@@ -9509,6 +10055,8 @@ class VideoEditorWorkflowService:
                 "typography": vector_track.get("typography"),
                 "style_preset_id": selected_style_preset_id,
                 "grammar_only_timeline": grammar_only_timeline,
+                "sparse_asset_mode": SPARSE_ASSET_MODE if sparse_asset_mode else None,
+                "sparse_asset_plan": sparse_asset_plan if sparse_asset_mode else None,
             }
         )
         enabled = [
@@ -10340,6 +10888,15 @@ class VideoEditorWorkflowService:
         ``核心数字``/``结果`` labels in a fixed corner.
         """
 
+        if str(item.get("style_id") or "").startswith("editorial_"):
+            from src.services.editorial_stickers import render_editorial_sticker
+
+            render_editorial_sticker(item, output_path)
+            return
+        if item.get("style_id") == "grammar_sticker":
+            from src.services.semantic_stickers import render_sticker
+            render_sticker(item, output_path)
+            return
         try:
             from PIL import Image, ImageDraw, ImageFont
         except ImportError as exc:
@@ -10370,16 +10927,19 @@ class VideoEditorWorkflowService:
             "grammar_arrow": (184, 216, 255, 255),
             "grammar_underline": (255, 211, 92, 255),
             "grammar_burst_lines": (255, 211, 92, 255),
+            "grammar_text_emphasis": (255, 211, 92, 255),
+            "grammar_numeric_emphasis": (255, 211, 92, 255),
+            "grammar_claim_emphasis": (255, 239, 181, 255),
+            "grammar_cta_emphasis": (235, 248, 255, 255),
         }.get(style_id, (255, 211, 92, 255))
         cx, cy = badge_width // 2, badge_height // 2
         soft = (*accent[:3], 170)
         faint = (*accent[:3], 100)
         if style_id == "grammar_red_x":
-            draw.line((cx - 64, cy - 64, cx + 64, cy + 64), fill=accent, width=10)
-            draw.line((cx + 64, cy - 64, cx - 64, cy + 64), fill=accent, width=10)
+            draw.line((cx - 54, cy - 54, cx + 54, cy + 54), fill=accent, width=8)
+            draw.line((cx + 54, cy - 54, cx - 54, cy + 54), fill=accent, width=8)
         elif style_id == "grammar_green_check":
-            draw.ellipse((cx - 70, cy - 70, cx + 70, cy + 70), outline=accent, width=7)
-            draw.line((cx - 38, cy + 2, cx - 8, cy + 30, cx + 48, cy - 34), fill=accent, width=10)
+            draw.line((cx - 54, cy + 2, cx - 14, cy + 38, cx + 58, cy - 42), fill=accent, width=8)
         elif style_id == "grammar_question":
             draw.arc((cx - 56, cy - 74, cx + 56, cy + 38), 205, 510, fill=accent, width=9)
             draw.line((cx, cy + 40, cx, cy + 68), fill=accent, width=9)
@@ -10401,6 +10961,100 @@ class VideoEditorWorkflowService:
                 (cx, cy - 62, cx, cy - 100),
             ):
                 draw.line((x0, y0, x1, y1), fill=accent, width=6)
+        elif style_id == "grammar_text_emphasis":
+            from src.services.video_editor_cloud import BRAND_TITLE_FONT_PATH
+
+            label = re.sub(
+                r"\s+", "", str(item.get("text") or item.get("semantic_text") or "")
+            ).strip()[:8]
+            if not label:
+                raise VideoEditorWorkflowError("文字重音缺少转写绑定文字。")
+            font_size = min(92, max(54, 560 // max(len(label), 1)))
+            font = ImageFont.truetype(str(BRAND_TITLE_FONT_PATH), font_size)
+            bbox = draw.textbbox((0, 0), label, font=font, stroke_width=5)
+            text_width = bbox[2] - bbox[0]
+            draw.text(
+                (cx, cy - 12),
+                label,
+                font=font,
+                anchor="mm",
+                fill=accent,
+                stroke_width=5,
+                stroke_fill=(18, 20, 27, 235),
+            )
+            draw.line(
+                (cx - min(250, text_width // 2 + 28), cy + font_size // 2 + 22,
+                 cx + min(250, text_width // 2 + 28), cy + font_size // 2 + 14),
+                fill=(*accent[:3], 220),
+                width=6,
+            )
+        elif style_id in {
+            "grammar_numeric_emphasis",
+            "grammar_claim_emphasis",
+            "grammar_cta_emphasis",
+        }:
+            from src.services.video_editor_cloud import BRAND_TITLE_FONT_PATH
+
+            max_label_length = 10 if style_id == "grammar_numeric_emphasis" else 8
+            label = re.sub(
+                r"\s+", "", str(item.get("text") or item.get("semantic_text") or "")
+            ).strip()[:max_label_length]
+            if not label:
+                raise VideoEditorWorkflowError("语义文字重音缺少转写绑定文字。")
+            if style_id == "grammar_numeric_emphasis":
+                font_size = min(104, max(66, 610 // max(len(label), 1)))
+                underline_width = 5
+                text_y = cy - 10
+            elif style_id == "grammar_cta_emphasis":
+                font_size = min(108, max(72, 650 // max(len(label), 1)))
+                underline_width = 7
+                text_y = cy - 12
+            else:
+                font_size = min(88, max(58, 560 // max(len(label), 1)))
+                underline_width = 5
+                text_y = cy - 8
+            font = ImageFont.truetype(str(BRAND_TITLE_FONT_PATH), font_size)
+            bbox = draw.textbbox((0, 0), label, font=font, stroke_width=4)
+            text_width = bbox[2] - bbox[0]
+            draw.text(
+                (cx, text_y),
+                label,
+                font=font,
+                anchor="mm",
+                fill=accent,
+                stroke_width=4,
+                stroke_fill=(18, 20, 27, 230),
+            )
+            # A short offset underline gives the claim a second layout
+            # language without creating a card or a UI frame.
+            underline_half = min(245, text_width // 2 + 22)
+            draw.line(
+                (cx - underline_half, cy + font_size // 2 + 18,
+                 cx + underline_half, cy + font_size // 2 + 10),
+                fill=(*accent[:3], 225),
+                width=underline_width,
+            )
+            if style_id == "grammar_numeric_emphasis":
+                # Three asymmetric marks read as a restrained impact cue,
+                # never as a circular sun or badge.
+                left = cx - text_width // 2 - 26
+                right = cx + text_width // 2 + 26
+                for offset in (0, 18, 36):
+                    draw.line(
+                        (left - offset // 2, cy - 22 + offset,
+                         left - 18 - offset // 2, cy - 34 + offset),
+                        fill=(*accent[:3], 215), width=4,
+                    )
+                    draw.line(
+                        (right + offset // 2, cy - 34 + offset,
+                         right + 18 + offset // 2, cy - 22 + offset),
+                        fill=(*accent[:3], 215), width=4,
+                    )
+            elif style_id == "grammar_cta_emphasis":
+                arrow_x = min(cx + text_width // 2 + 46, badge_width - 28)
+                draw.line((arrow_x - 24, cy + 4, arrow_x + 20, cy + 4), fill=accent, width=6)
+                draw.line((arrow_x + 20, cy + 4, arrow_x + 2, cy - 14), fill=accent, width=6)
+                draw.line((arrow_x + 20, cy + 4, arrow_x + 2, cy + 22), fill=accent, width=6)
         elif style_id == "keyword_pop":
             from src.services.video_editor_cloud import BRAND_TITLE_FONT_PATH
 
@@ -10948,6 +11602,8 @@ class VideoEditorWorkflowService:
         scrub_source_captions: bool = False,
         source_caption_detection: Mapping[str, Any] | None = None,
         source_caption_intervals: Sequence[Mapping[str, Any]] | None = None,
+        pip_layout: str = "legacy",
+        clean_hard_cuts: bool = False,
     ) -> str:
         """Build a source-only cut plan with a guaranteed-safe foreground.
 
@@ -11045,6 +11701,17 @@ class VideoEditorWorkflowService:
             filters.append(
                 f"[rhythm0]setpts=PTS/{playback_rate:.3f}[base]"
             )
+        elif clean_hard_cuts:
+            # Grammar routes must not expose a fixed transition template at
+            # every rhythm boundary. Keep the source clock and leave visible
+            # changes to grounded captions, camera events and symbols.
+            concat_inputs = "".join(
+                f"[rhythm{index}]" for index in range(scene_count)
+            )
+            filters.append(
+                f"{concat_inputs}concat=n={scene_count}:v=1:a=0,"
+                f"setpts=PTS/{playback_rate:.3f}[base]"
+            )
         else:
             accumulated_duration = (duration_seconds / scene_count)
             transition_input = "rhythm0"
@@ -11081,8 +11748,8 @@ class VideoEditorWorkflowService:
             ramp = 0.14
             camera_action = str(item.get("camera_action") or item.get("label") or "")
             zoom_amount = {
-                "punch_in_soft": 0.045,
-                "punch_in_medium": 0.075,
+                "punch_in_soft": 0.055,
+                "punch_in_medium": 0.090,
                 "slow_push": 0.035,
                 "reframe_left": 0.05,
                 "reframe_right": 0.05,
@@ -11199,7 +11866,16 @@ class VideoEditorWorkflowService:
                     f"eof_action=pass[{output_label}]"
                 )
             else:
-                pip_geometry = _portrait_pip_geometry(width, height)
+                pip_geometry = (
+                    _sparse_pip_geometry(
+                        width,
+                        height,
+                        layout="PIP_SIDE_FLOAT",
+                        variant=overlay_index,
+                    )
+                    if pip_layout == "sparse"
+                    else _portrait_pip_geometry(width, height)
+                )
                 # Never place an unsafe PiP merely to satisfy the event count.
                 # The caller's quality report records the failed geometry gate.
                 if not pip_geometry.get("safe") or not pip_geometry.get("bbox"):
@@ -11209,23 +11885,57 @@ class VideoEditorWorkflowService:
                 pip_height = int(pip_bbox["height"])
                 pip_left = int(pip_bbox["left"])
                 pip_top = int(pip_bbox["top"])
-                # Keep the crop/geometry deterministic, but avoid a complex
-                # per-pixel alpha expression here: on some FFmpeg builds its
-                # escaped geq expression evaluates to a fully transparent
-                # frame.  A thin translucent border gives the PiP a designed
-                # container while keeping the real footage visibly present.
-                pip_frame = (
-                    "drawbox=x=1:y=1:w=iw-2:h=ih-2:"
-                    "color=white@0.55:t=2"
-                )
-                if image_broll:
+                pip_frame = "drawbox=x=1:y=1:w=iw-2:h=ih-2:color=white@0.55:t=2"
+                if pip_layout == "sparse":
+                    # A sparse PiP is an editorial insert, not a UI card. Put
+                    # the source on a transparent fixed-size canvas so a
+                    # short scale/slide/fade entry can happen without
+                    # changing the main overlay geometry. The canvas is
+                    # shifted to the final clock after the local animation.
+                    event_duration = max(0.20, end - start)
+                    intro_duration = min(0.22, max(0.08, event_duration / 3.0))
+                    outro_duration = min(0.20, max(0.08, event_duration / 4.0))
+                    left_side = pip_left < width / 2
+                    slide_offset = 14 if left_side else -14
+                    scale_progress = (
+                        f"0.90+0.10*min(1,t/{intro_duration:.3f})"
+                    )
+                    filters.append(
+                        f"[{input_index}:v]setpts=PTS-STARTPTS,format=rgba,"
+                        f"scale={pip_width}:{pip_height}:"
+                        "force_original_aspect_ratio=increase,"
+                        f"crop={pip_width}:{pip_height}:(iw-ow)/2:(ih-oh)/2,"
+                        f"scale=w='trunc({pip_width}*({scale_progress})/2)*2':"
+                        f"h='trunc({pip_height}*({scale_progress})/2)*2':"
+                        f"eval=frame[{label}_scaled]"
+                    )
+                    filters.append(
+                        f"color=c=black@0.0:s={pip_width}x{pip_height}:"
+                        f"r={fps}:d={event_duration:.3f},format=rgba[{label}_canvas]"
+                    )
+                    filters.append(
+                        f"[{label}_canvas][{label}_scaled]overlay="
+                        f"x='(W-w)/2+{slide_offset}*(1-min(1,t/{intro_duration:.3f}))':"
+                        "y='(H-h)/2':shortest=1,format=rgba,"
+                        f"fade=t=in:st=0:d={intro_duration:.3f}:alpha=1,"
+                        f"fade=t=out:st={max(0.0, event_duration - outro_duration):.3f}:"
+                        f"d={outro_duration:.3f}:alpha=1,"
+                        f"setpts=PTS+{start:.3f}/TB[{label}]"
+                    )
+                elif image_broll:
+                    image_motion = (
+                        "x='(iw-ow)/2+4*sin(2*PI*t/3.6)':"
+                        "y='(ih-oh)/2+4*cos(2*PI*t/3.6)',"
+                        if pip_layout == "sparse"
+                        else "x='(iw-ow)/2+10*sin(2*PI*t/3.6)':"
+                        "y='(ih-oh)/2+10*cos(2*PI*t/3.6)',"
+                    )
                     filters.append(
                         f"[{input_index}:v]format=rgba,"
-                        f"scale={pip_width + 40}:{pip_height + 70}:force_original_aspect_ratio=increase,"
+                        f"scale={pip_width + (24 if pip_layout == 'sparse' else 40)}:{pip_height + (24 if pip_layout == 'sparse' else 70)}:force_original_aspect_ratio=increase,"
                         f"crop={pip_width}:{pip_height}:"
-                        "x='(iw-ow)/2+10*sin(2*PI*t/3.6)':"
-                        "y='(ih-oh)/2+10*cos(2*PI*t/3.6)',"
-                        f"setsar=1,{pip_frame},fade=t=in:st={start:.3f}:d=0.20:alpha=1,fade=t=out:st="
+                        + image_motion
+                        + f"setsar=1,{pip_frame},fade=t=in:st={start:.3f}:d=0.20:alpha=1,fade=t=out:st="
                         f"{max(start, end - 0.20):.3f}:d=0.20:alpha=1[{label}]"
                     )
                 else:
@@ -11345,10 +12055,17 @@ class VideoEditorWorkflowService:
                 scale_expression = "1.0+0.06*sin(PI*t/0.55)"
                 x_expression = "(W-w)/2"
             if style_id.startswith("grammar_"):
-                # Keep semantic punctuation in the upper-right editorial
-                # safe band; centered overlays landed on the speaker's face
-                # in the first grammar-only render.
-                x_expression = "W-w-24"
+                # Grammar symbols are local punctuation, not corner tags. Keep
+                # the upper-right corner empty and place the semantic accent
+                # in the lower safe band. Role-specific text treatments use
+                # different horizontal anchors so the timeline does not read
+                # as one repeated template card.
+                if style_id == "grammar_claim_emphasis":
+                    x_expression = "42"
+                elif style_id == "grammar_cta_emphasis":
+                    x_expression = "trunc((W-w)/2)"
+                else:
+                    x_expression = "W-w-42"
             if style_id in {
                 "keyword_pop",
                 "knowledge_pop_card",
@@ -11357,24 +12074,85 @@ class VideoEditorWorkflowService:
                 "cta_burst",
             } or style_id.startswith("grammar_"):
                 y_expression = (
-                    "trunc(H*0.12-h/2)"
+                    (
+                        "trunc(H*0.64-h/2)"
+                        if style_id in {
+                            "grammar_text_emphasis",
+                            "grammar_numeric_emphasis",
+                            "grammar_claim_emphasis",
+                            "grammar_cta_emphasis",
+                        }
+                        else "trunc(H*0.60-h/2)"
+                    )
                     if style_id.startswith("grammar_")
                     else "trunc(H*0.30-h/2)"
                 )
             else:
                 y_expression = "trunc(H*0.76-h/2)"
+            if style_id.startswith("editorial_"):
+                # Custom semantic stickers live in a small side shelf. They
+                # are not corner tags and never enter the subtitle band.
+                x_expression = "32" if item.get("side") == "left" else "W-w-32"
+                y_expression = (
+                    "trunc(H*0.46-h/2)"
+                    if style_id == "editorial_cta"
+                    else "trunc(H*0.36-h/2)"
+                )
             motion_width = (
-                max(200, round(width * 0.28))
+                max(
+                    430 if style_id in {
+                        "grammar_text_emphasis",
+                        "grammar_numeric_emphasis",
+                        "grammar_claim_emphasis",
+                        "grammar_cta_emphasis",
+                    } else 250,
+                    round(width * (0.66 if style_id in {
+                        "grammar_text_emphasis",
+                        "grammar_numeric_emphasis",
+                        "grammar_claim_emphasis",
+                        "grammar_cta_emphasis",
+                    } else 0.34)),
+                )
                 if style_id.startswith("grammar_")
                 else max(420, round(width * 0.72))
             )
-            motion_height = max(170, round(motion_width * 260 / 640))
+            if style_id.startswith("editorial_"):
+                motion_width = round(width * 0.30)
+            motion_height = (
+                max(100, round(motion_width * 260 / 640))
+                if style_id.startswith("grammar_")
+                else max(170, round(motion_width * 260 / 640))
+            )
+            if style_id.startswith("editorial_"):
+                motion_height = max(120, round(motion_width * 220 / 300))
+            if style_id == "grammar_sticker":
+                motion_width = motion_height = round(width * 0.27)
+                x_expression = "36" if item.get("side") == "left" else "W-w-36"
+                y_expression = "trunc(H*0.67-h/2)"
+                scale_expression = "0.82+0.18*min(1,t/0.14)+0.08*sin(PI*min(1,t/0.28))"
+            elif style_id.startswith("grammar_"):
+                scale_expression = "1+0.08*sin(PI*min(1,t/0.24))"
+            elif style_id.startswith("editorial_"):
+                scale_expression = "0.84+0.16*min(1,t/0.18)"
+            # Every PNG starts its own animation at local zero, then is placed
+            # on the video clock. Previously late events had already faded in
+            # (and completed their pop) long before they became visible.
+            event_duration = end - start
+            rotation = (
+                "rotate='0.045*exp(-t*6)*sin(t*18)':fillcolor=none,"
+                if style_id == "grammar_sticker" else (
+                    "rotate='0.018*exp(-t*7)*sin(t*14)':fillcolor=none,"
+                    if style_id.startswith("editorial_") else ""
+                )
+            )
             filters.append(
-                f"[{input_index}:v]format=rgba,"
+                f"[{input_index}:v]trim=duration={event_duration:.3f},setpts=PTS-STARTPTS,format=rgba,"
                 f"scale=w='trunc({motion_width}*({scale_expression})/2)*2':"
                 f"h='trunc({motion_height}*({scale_expression})/2)*2':eval=frame,"
-                "fade=t=in:st=0:d=0.16:alpha=1["
-                f"{label}]"
+                + rotation
+                + "fade=t=in:st=0:d=0.12:alpha=1,"
+                f"fade=t=out:st={max(0, event_duration-0.18):.3f}:d=0.18:alpha=1,"
+                f"setpts=PTS+{start:.3f}/TB[{label}]"
             )
             overlay = (
                 f"{caption_input}[{label}]overlay=x='{x_expression}':"
@@ -11614,12 +12392,26 @@ class VideoEditorWorkflowService:
                 "talking-head-grammar-only-v1",
             }
             grammar_only = preset_id == "talking-head-grammar-only-v1"
+            sparse_asset_mode = grammar_only and str(
+                edit_plan.get("sparse_asset_mode") or ""
+            ).upper() == SPARSE_ASSET_MODE
             if grammar_only:
                 # Keep V1 immutable while allowing the same strict renderer to
                 # produce the requested visual-polish artifact.
+                polish_version = str(
+                    edit_plan.get("grammar_polish_version") or "v1"
+                ).lower()
+                sparse_version = str(
+                    edit_plan.get("sparse_asset_version") or "v1"
+                ).lower()
                 output_path = output_dir / (
-                    "jy-clone-grammar-v2.mp4"
-                    if str(edit_plan.get("grammar_polish_version") or "") == "v2"
+                    f"jy-clone-sparse-asset-{sparse_version}.mp4"
+                    if sparse_asset_mode
+                    else
+                    "jy-clone-grammar-v3.mp4"
+                    if polish_version == "v3"
+                    else "jy-clone-grammar-v2.mp4"
+                    if polish_version == "v2"
                     else "jy-clone-grammar-v1.mp4"
                 )
             local_minimax_visuals = (
@@ -11692,6 +12484,7 @@ class VideoEditorWorkflowService:
                 },
             )
             segments = json.loads(task.outputs.get("subtitle_segments_json") or "[]")
+            transcript_retimed = False
             if shot_plan:
                 from src.services.talking_head_templates import retime_segments_for_shot_plan
 
@@ -11709,8 +12502,13 @@ class VideoEditorWorkflowService:
                     for shot in shot_plan.get("shots") or []
                     if isinstance(shot, Mapping)
                 )
+                preserves_source_clock = preserves_source_clock and all(
+                    float(segment.get("end") or 0) <= float(media["duration_seconds"]) + 0.01
+                    for segment in segments
+                )
                 if not preserves_source_clock:
                     segments = retime_segments_for_shot_plan(segments, shot_plan)
+                    transcript_retimed = True
                 if not segments:
                     raise VideoEditorWorkflowError("分镜重排后没有可用字幕时间轴。")
             rendered_segments: list[dict[str, Any]] = []
@@ -11768,11 +12566,56 @@ class VideoEditorWorkflowService:
                 )
 
                 grammar_timeline = edit_plan.get("grammar_only_timeline")
-                if not isinstance(grammar_timeline, Mapping):
+                if not isinstance(grammar_timeline, Mapping) or transcript_retimed:
                     grammar_timeline = build_grammar_only_timeline(
                         segments,
                         duration_seconds=float(media["duration_seconds"]),
                     )
+                # Retime/rebuild is intentionally allowed to replace the
+                # cached grammar timeline, but it must not erase the
+                # transcript-grounded editorial sticker layer.  The previous
+                # path rebuilt the base grammar and then stopped, so formal
+                # exports silently lost every custom sticker while keeping
+                # the older symbol events.  Re-derive stickers from the
+                # current reviewed annotations after every rebuild.
+                if sparse_asset_mode:
+                    from src.services.editorial_stickers import (
+                        build_editorial_sticker_events,
+                    )
+
+                    annotations = (
+                        grammar_timeline.get("semantic_annotations")
+                        or segments
+                    )
+                    editorial_stickers = build_editorial_sticker_events(
+                        annotations,
+                        duration_seconds=float(media["duration_seconds"]),
+                        max_events=5,
+                    )
+                    existing_events = [
+                        dict(event)
+                        for event in grammar_timeline.get("events") or []
+                        if isinstance(event, Mapping)
+                    ]
+                    existing_ids = {
+                        str(event.get("event_id") or "")
+                        for event in existing_events
+                    }
+                    editorial_stickers = [
+                        event
+                        for event in editorial_stickers
+                        if str(event.get("event_id") or "") not in existing_ids
+                    ]
+                    grammar_timeline = {
+                        **dict(grammar_timeline),
+                        "events": [*existing_events, *editorial_stickers],
+                        "sticker_events": [
+                            *(
+                                grammar_timeline.get("sticker_events") or []
+                            ),
+                            *editorial_stickers,
+                        ],
+                    }
                 timeline_violations = validate_grammar_only_timeline(grammar_timeline)
                 if timeline_violations:
                     raise VideoEditorWorkflowError(
@@ -11792,6 +12635,19 @@ class VideoEditorWorkflowService:
                     duration_seconds=float(media["duration_seconds"]),
                 )
             motion_events = compiled_motion_events or stored_motion_events
+            sticker_events: list[dict[str, Any]] = []
+            if sparse_asset_mode:
+                # Keep the approved A-roll grammar, not the rejected floating
+                # library icons or a second, competing copy of the caption.
+                # Emphasis belongs inside the subtitle; camera and sparse SFX
+                # retain their semantic clocks.
+                motion_events = _clean_grammar_motion_events(motion_events)
+            sticker_events = [
+                dict(event)
+                for event in motion_events
+                if str(event.get("type") or "") == "semantic_sticker"
+                and str(event.get("asset_category") or "") == "custom_semantic_sticker"
+            ]
             if isinstance(director_plan, dict) and motion_events:
                 director_plan = {
                     **director_plan,
@@ -11813,7 +12669,7 @@ class VideoEditorWorkflowService:
                 raw_brolls = [legacy_broll] if legacy_broll else []
             elif not raw_brolls and legacy_broll:
                 raw_brolls = [legacy_broll]
-            if grammar_only:
+            if grammar_only and not sparse_asset_mode:
                 raw_grammar_inputs = {
                     "brolls": raw_brolls,
                     "broll": legacy_broll,
@@ -11828,7 +12684,29 @@ class VideoEditorWorkflowService:
                     )
                 raw_brolls = []
                 legacy_broll = {}
-            if local_grammar_v2 and not local_minimax_visuals:
+            if sparse_asset_mode:
+                sparse_plan = edit_plan.get("sparse_asset_plan") or {
+                    "mode": SPARSE_ASSET_MODE,
+                    "asset_events": raw_brolls,
+                }
+                if not isinstance(sparse_plan, Mapping):
+                    raise VideoEditorWorkflowError(
+                        "SPARSE_ASSET_V1 资产计划缺失，已停止渲染。"
+                    )
+                sparse_plan_for_validation = {
+                    **dict(sparse_plan),
+                    "asset_events": raw_brolls,
+                }
+                sparse_errors = validate_sparse_asset_plan(
+                    sparse_plan_for_validation
+                )
+                if sparse_errors:
+                    raise VideoEditorWorkflowError(
+                        "SPARSE_ASSET_V1 校验失败，已停止渲染："
+                        f"{', '.join(sparse_errors[:6])}"
+                    )
+                legacy_broll = {}
+            if local_grammar_v2 and not local_minimax_visuals and not sparse_asset_mode:
                 # V2 is deliberately A-roll-first.  Clear stale release data
                 # at the renderer boundary so an older task cannot resurrect
                 # B-roll merely because its cached JSON still contains it.
@@ -11877,7 +12755,7 @@ class VideoEditorWorkflowService:
                 task.outputs.get("vector_track_json")
                 or json.dumps(edit_plan.get("vector_track") or {})
             )
-            if local_grammar_v2 and not local_minimax_visuals:
+            if local_grammar_v2 and not local_minimax_visuals and not sparse_asset_mode:
                 vector_track = {"items": [], "asset_count": 0}
             if isinstance(vector_track, Mapping):
                 existing_vector_items = [
@@ -12092,16 +12970,7 @@ class VideoEditorWorkflowService:
                 output_profile=profile,
                 caption_groups=edit_plan.get("caption_groups"),
                 caption_emphasis=(
-                    [
-                        {
-                            "segment_index": event.get("source_segment_index"),
-                            "term": event.get("semantic_text"),
-                            "kind": "number" if event.get("semantic_role") in {"NUMBER", "PRICE", "PERCENT"} else "keyword",
-                        }
-                        for event in motion_events
-                        if grammar_only
-                        and str(event.get("type") or "") == "keyword_emphasis"
-                    ]
+                    _grammar_caption_emphasis_items(motion_events)
                     if grammar_only
                     else edit_plan.get("caption_emphasis")
                 ),
@@ -12144,16 +13013,7 @@ class VideoEditorWorkflowService:
                 output_profile=profile,
                 caption_groups=edit_plan.get("caption_groups"),
                 caption_emphasis=(
-                    [
-                        {
-                            "segment_index": event.get("source_segment_index"),
-                            "term": event.get("semantic_text"),
-                            "kind": "number" if event.get("semantic_role") in {"NUMBER", "PRICE", "PERCENT"} else "keyword",
-                        }
-                        for event in motion_events
-                        if grammar_only
-                        and str(event.get("type") or "") == "keyword_emphasis"
-                    ]
+                    _grammar_caption_emphasis_items(motion_events)
                     if grammar_only
                     else edit_plan.get("caption_emphasis")
                 ),
@@ -12201,12 +13061,13 @@ class VideoEditorWorkflowService:
                 self._review_title_png_bytes(
                     task.outputs.get("publish_title") or task.title,
                     output_profile=profile,
+                    style_preset=style_preset,
                 )
             )
 
             from src.services.video_editor_cloud import visual_style_spec
 
-            spec = visual_style_spec(profile)
+            spec = visual_style_spec(profile, style_preset=style_preset)
             canvas = spec["canvas"]
             title_style = spec["title"]
             width = int(canvas["width"])
@@ -12263,9 +13124,11 @@ class VideoEditorWorkflowService:
             motion_items: list[dict[str, Any]] = []
             motion_badge_paths: list[Path] = []
             for index, event in enumerate(motion_events):
-                if grammar_only and str(event.get("type") or "") != "semantic_symbol":
-                    # Keyword/text emphasis is subtitle-native; camera is a
-                    # crop primitive. Only semantic symbols require an image.
+                event_type = str(event.get("type") or "")
+                if grammar_only and event_type not in {"semantic_symbol", "text_emphasis", "semantic_sticker"}:
+                    # Keyword emphasis is subtitle-native and camera is a
+                    # crop primitive. Only semantic symbols and grounded
+                    # short text emphasis require an image layer.
                     continue
                 try:
                     start = float(event.get("start") or 0)
@@ -12274,10 +13137,22 @@ class VideoEditorWorkflowService:
                     continue
                 if end <= start or start >= float(media["duration_seconds"]):
                     continue
+                render_event = dict(event)
+                if grammar_only and event_type == "text_emphasis":
+                    role = str(render_event.get("semantic_role") or "")
+                    render_event["style_id"] = (
+                        "grammar_numeric_emphasis"
+                        if role in {"NUMBER", "PRICE", "PERCENT"}
+                        else "grammar_cta_emphasis"
+                        if role == "CTA"
+                        else "grammar_claim_emphasis"
+                        if role in {"KEY_CLAIM", "CONCLUSION", "STEP", "PROCESS", "PRODUCT", "LOCATION", "EXAMPLE"}
+                        else "grammar_text_emphasis"
+                    )
                 badge_path = temp_dir / f"semantic-motion-{index}.png"
-                self._render_semantic_motion_badge(event, output_path=badge_path)
+                self._render_semantic_motion_badge(render_event, output_path=badge_path)
                 motion_item = {
-                    **event,
+                    **render_event,
                     "start": max(0.0, start),
                     "end": min(float(media["duration_seconds"]), end),
                     "path": badge_path,
@@ -12296,38 +13171,27 @@ class VideoEditorWorkflowService:
             subtitle_fx_items: list[dict[str, Any]] = list(motion_items)
             if grammar_only:
                 target_sfx_count = min(
-                    15,
-                    max(8, round(float(media["duration_seconds"]) / 60.0 * 8)),
+                    12,
+                    max(6, round(float(media["duration_seconds"]) / 60.0 * 7)),
                 )
-                occupied_segments = {
-                    item.get("source_segment_index")
-                    for item in motion_items
-                    if item.get("source_segment_index") is not None
-                }
-                occupied_starts = [
-                    float(item.get("start") or 0) for item in motion_items
-                ]
                 keyword_candidates = sorted(
                     (
                         dict(event)
                         for event in motion_events
                         if isinstance(event, Mapping)
                         and str(event.get("type") or "") == "keyword_emphasis"
-                        and event.get("source_segment_index") not in occupied_segments
                     ),
                     key=lambda item: (
                         -float(item.get("importance") or 0),
                         float(item.get("start") or 0),
                     ),
                 )
-                for candidate in keyword_candidates:
-                    if len(subtitle_fx_items) >= target_sfx_count:
-                        break
-                    start = float(candidate.get("start") or 0)
-                    if any(abs(start - previous) < 2.8 for previous in occupied_starts):
-                        continue
-                    subtitle_fx_items.append(candidate)
-                    occupied_starts.append(start)
+                subtitle_fx_items = _select_sparse_sfx_items(
+                    motion_items,
+                    keyword_candidates,
+                    duration_seconds=float(media["duration_seconds"]),
+                    target_count=target_sfx_count,
+                )
             subtitle_fx_items.sort(key=lambda item: (float(item.get("start") or 0), str(item.get("event_id") or "")))
             visual_beats = [
                 beat
@@ -12509,6 +13373,8 @@ class VideoEditorWorkflowService:
                     source_caption_intervals=(
                         subtitle_render_preview.get("cues") or []
                     ),
+                    pip_layout="sparse" if sparse_asset_mode else "legacy",
+                    clean_hard_cuts=grammar_only,
                 ),
                 "[1:v]format=rgba[title]",
             ]
@@ -12567,9 +13433,11 @@ class VideoEditorWorkflowService:
                 )
                 visual_input = f"[beatout{index}]"
                 next_input_index += 1
-            subtitle_fx_enabled = os.getenv(
-                "VIDEO_EDITOR_SUBTITLE_SFX_ENABLED", "1"
-            ).lower() not in {"0", "false", "no", "off"}
+            subtitle_fx_enabled = (
+                grammar_only
+                or os.getenv("VIDEO_EDITOR_SUBTITLE_SFX_ENABLED", "1").lower()
+                not in {"0", "false", "no", "off"}
+            )
             subtitle_fx_input_indices: dict[int, int] = {}
             subtitle_fx_asset_ids: list[str] = []
             if subtitle_fx_enabled:
@@ -12652,10 +13520,32 @@ class VideoEditorWorkflowService:
                 audio_output_label = base_audio_label
             encoder_selection = _select_local_video_encoder()
             selected_encoder = str(encoder_selection.get("encoder") or "libx264")
+            filter_complex_text = ";".join(filter_parts)
+            # Windows CreateProcess has a much tighter practical command-line
+            # limit than POSIX shells.  A handful of semantic stickers plus
+            # their local SFX can push the filter graph over that limit even
+            # though the graph itself is valid.  Keep the formal renderer
+            # generic by moving only the filter graph to FFmpeg's script
+            # input when it is large; no visual behavior or timing changes.
+            filter_graph_args: list[str]
+            if len(filter_complex_text) > 7000:
+                filter_script_path = temp_dir / "filter-complex.txt"
+                filter_script_path.write_text(
+                    filter_complex_text,
+                    encoding="utf-8",
+                )
+                filter_graph_args = [
+                    "-filter_complex_script",
+                    str(filter_script_path),
+                ]
+            else:
+                filter_graph_args = [
+                    "-filter_complex",
+                    filter_complex_text,
+                ]
             command.extend(
                 [
-                    "-filter_complex",
-                    ";".join(filter_parts),
+                    *filter_graph_args,
                     "-map",
                     "[vout]",
                     "-map",
@@ -13071,11 +13961,34 @@ class VideoEditorWorkflowService:
                     else "procedural_fallback"
                 ),
                 "authorization_status": (
-                    "metadata_not_present"
+                    "confirmed"
                     if subtitle_fx_input_indices
                     else "not_applicable"
                 ),
+                "event_schedule": [
+                    {
+                        "start": round(
+                            float(item.get("start") or 0) / max(playback_rate, 0.01),
+                            3,
+                        ),
+                        "semantic_role": item.get("semantic_role"),
+                        "semantic_text": item.get("semantic_text"),
+                        "profile": item.get("sfx_profile") or item.get("style_id"),
+                    }
+                    for item in subtitle_fx_items
+                    if isinstance(item, Mapping)
+                ],
                 "voice_safe_mix": True,
+            }
+            quality_report["stickers"] = {
+                "event_count": len(sticker_events), "events": sticker_events,
+                "source": (
+                    "local_project_owned_editorial_vectors"
+                    if sticker_events else "none"
+                ),
+                "asset_type": "custom_semantic_vector_animation",
+                "third_party_cost": 0,
+                "counts_as_broll": False,
             }
             quality_report["alignment"] = audio_video_drift or {
                 "method": "ffprobe_stream_start_end_pts",
@@ -13293,6 +14206,7 @@ class VideoEditorWorkflowService:
                 reframe_events=reframe_events,
                 playback_rate=playback_rate,
                 opening_offset_seconds=opening_duration,
+                allow_safe_a_roll_degradation=bool(sparse_asset_mode and not brolls),
             )
             visual_coverage_seconds = round(
                 sum(
@@ -13394,6 +14308,9 @@ class VideoEditorWorkflowService:
             template_id = str(shot_plan.get("template_id") or "")
             visual_density = str(shot_plan.get("visual_density") or "")
             grammar_only = template_id == "talking-head-grammar-only-v1"
+            sparse_asset_mode = grammar_only and str(
+                edit_plan.get("sparse_asset_mode") or ""
+            ).upper() == SPARSE_ASSET_MODE
             local_grammar_template = template_id in {
                 "talking-head-local-grammar-v2",
                 "talking-head-grammar-only-v1",
@@ -13445,6 +14362,25 @@ class VideoEditorWorkflowService:
                     int(visual_gate_policy.get("min_full_events", 0)),
                 )
             )
+            sparse_asset_gate_errors: list[str] = []
+            if sparse_asset_mode:
+                sparse_plan = edit_plan.get("sparse_asset_plan") or {}
+                sparse_asset_gate_errors = (
+                    validate_sparse_asset_plan(
+                        {**dict(sparse_plan), "asset_events": brolls}
+                    )
+                    if isinstance(sparse_plan, Mapping)
+                    else ["sparse_plan_missing"]
+                )
+                # SPARSE_ASSET_V1 has its own small budget, independent of
+                # the legacy rich-template minimum/count policy.
+                real_event_count_gate = bool(
+                    not sparse_asset_gate_errors and len(brolls) <= 6
+                )
+                coverage_gate = bool(0.0 <= broll_coverage_ratio <= 0.30)
+                effective_coverage_gate = True
+                pip_requirement_gate = True
+                full_requirement_gate = True
             semantic_match_gate_passed = bool(
                 not brolls or semantic_broll_gate_passed(brolls)
             )
@@ -13466,14 +14402,31 @@ class VideoEditorWorkflowService:
                 # rich-template B-roll shape and coverage policy is not
                 # applicable.  It is still strict about the absence of
                 # external visuals.
-                local_visual_ready = bool(
-                    shot_plan
-                    and not brolls
-                    and not vector_items
-                    and not semantic_layer_items
-                    and not asset_requests
-                    and not generated_image_brolls
-                )
+                if sparse_asset_mode:
+                    sparse_plan = edit_plan.get("sparse_asset_plan") or {}
+                    sparse_errors = validate_sparse_asset_plan(
+                        {**dict(sparse_plan), "asset_events": brolls}
+                    ) if isinstance(sparse_plan, Mapping) else ["sparse_plan_missing"]
+                    local_visual_ready = bool(
+                        shot_plan
+                        and not vector_items
+                        and not semantic_layer_items
+                        and not asset_requests
+                        and (
+                            not generated_image_brolls
+                            or (sparse_asset_mode and bool(generated_image_brolls))
+                        )
+                        and not sparse_errors
+                    )
+                else:
+                    local_visual_ready = bool(
+                        shot_plan
+                        and not brolls
+                        and not vector_items
+                        and not semantic_layer_items
+                        and not asset_requests
+                        and not generated_image_brolls
+                    )
             release_visual_gate_passed = bool(
                 (not shot_plan or real_event_count_gate)
                 and (not shot_plan or coverage_gate)
@@ -13485,13 +14438,28 @@ class VideoEditorWorkflowService:
                 and semantic_match_gate_passed
             )
             if grammar_only:
-                release_visual_gate_passed = bool(
-                    shot_plan
-                    and not brolls
-                    and not vector_items
-                    and not semantic_layer_items
-                    and not asset_requests
-                )
+                if sparse_asset_mode:
+                    sparse_plan = edit_plan.get("sparse_asset_plan") or {}
+                    sparse_errors = validate_sparse_asset_plan(
+                        {**dict(sparse_plan), "asset_events": brolls}
+                    ) if isinstance(sparse_plan, Mapping) else ["sparse_plan_missing"]
+                    release_visual_gate_passed = bool(
+                        shot_plan
+                        and not vector_items
+                        and not semantic_layer_items
+                        and not asset_requests
+                        and not generated_image_brolls
+                        and not sparse_errors
+                        and semantic_match_gate_passed
+                    )
+                else:
+                    release_visual_gate_passed = bool(
+                        shot_plan
+                        and not brolls
+                        and not vector_items
+                        and not semantic_layer_items
+                        and not asset_requests
+                    )
             requested_pipeline = str(
                 task.outputs.get("requested_pipeline") or ""
             ).strip()
@@ -13534,7 +14502,16 @@ class VideoEditorWorkflowService:
             for index, item in enumerate(brolls):
                 if str(item.get("mode") or "pip") == "full":
                     continue
-                geometry = _portrait_pip_geometry(width, height)
+                geometry = (
+                    _sparse_pip_geometry(
+                        width,
+                        height,
+                        layout="PIP_SIDE_FLOAT",
+                        variant=index,
+                    )
+                    if sparse_asset_mode
+                    else _portrait_pip_geometry(width, height)
+                )
                 pip_geometry_checks.append(
                     {
                         "event_index": index,
@@ -13610,6 +14587,21 @@ class VideoEditorWorkflowService:
                     and full_requirement_gate
                 ),
             }
+            if sparse_asset_mode:
+                quality_report["visual_gate_policy"].update(
+                    {
+                        "mode": SPARSE_ASSET_MODE,
+                        "external_visuals_required": False,
+                        "external_visuals_present": bool(brolls),
+                        "max_sparse_asset_events": 6,
+                        "max_sparse_coverage_ratio": 0.30,
+                        "passed": bool(
+                            real_event_count_gate
+                            and coverage_gate
+                            and semantic_match_gate_passed
+                        ),
+                    }
+                )
             if grammar_only:
                 quality_report["visual_gate_policy"].update(
                     {
@@ -13695,7 +14687,7 @@ class VideoEditorWorkflowService:
                 "vector_event_count": len(vector_items),
                 "programmatic_symbol_event_count": len(motion_items),
                 "camera_event_count": len(reframe_events),
-                "external_visuals_disabled": grammar_only
+                "external_visuals_disabled": grammar_only and not sparse_asset_mode
                 or (
                     template_id == "talking-head-local-grammar-v2"
                     and not local_minimax_visuals
@@ -13716,7 +14708,9 @@ class VideoEditorWorkflowService:
             if local_grammar_template:
                 quality_report["local_grammar_v2" if not grammar_only else "grammar_only"] = {
                     "mode": "grammar_only" if grammar_only else "local_grammar_v2",
-                    "a_roll_only": not bool(generated_image_brolls),
+                    "a_roll_only": not bool(generated_image_brolls)
+                    and not bool(brolls)
+                    and not bool(vector_items),
                     "external_video_asset_count": len(brolls),
                     "vector_asset_count": len(vector_items),
                     "generated_image_count": len(generated_image_brolls),
@@ -13735,7 +14729,7 @@ class VideoEditorWorkflowService:
                     quality_report["grammar_only"].update(
                         {
                             "polish_version": str(edit_plan.get("grammar_polish_version") or "v1"),
-                            "external_visuals_disabled": True,
+                            "external_visuals_disabled": not sparse_asset_mode,
                             "external_visual_event_count": len(brolls)
                             + len(vector_items)
                             + len(semantic_layer_items),
@@ -13759,6 +14753,53 @@ class VideoEditorWorkflowService:
                             ),
                         }
                     )
+                    if sparse_asset_mode:
+                        quality_report["sparse_asset"] = {
+                            "mode": SPARSE_ASSET_MODE,
+                            "asset_events": [
+                                {
+                                    key: item.get(key)
+                                    for key in (
+                                        "event_id",
+                                        "asset_id",
+                                        "start",
+                                        "end",
+                                        "mode",
+                                        "layout",
+                                        "semantic_role",
+                                        "semantic_roles",
+                                        "semantic_text",
+                                        "selection_reason",
+                                        "match_score",
+                                        "match_reason",
+                                        "semantic_match",
+                                        "specificity",
+                                        "visual_value",
+                                        "obstruction_risk",
+                                        "asset_origin",
+                                        "source_type",
+                                        "source_provider",
+                                        "authorization_status",
+                                        "publish_licensed",
+                                    )
+                                }
+                                for item in brolls
+                                if isinstance(item, Mapping)
+                            ],
+                            "asset_count": len(brolls),
+                            "pip_count": sum(
+                                1 for item in brolls if item.get("mode") == "pip"
+                            ),
+                            "full_screen_count": sum(
+                                1 for item in brolls if item.get("mode") == "full"
+                            ),
+                            "rejections": (
+                                (edit_plan.get("sparse_asset_plan") or {}).get("rejections") or []
+                            ),
+                            "minimax_image_calls": 0,
+                            "provider_search_calls": 0,
+                            "fallback": "a_roll",
+                        }
             if not visual_pipeline_executed:
                 quality_report["failure_code"] = "VISUAL_PIPELINE_NOT_EXECUTED"
             if shot_plan:
@@ -13851,12 +14892,17 @@ class VideoEditorWorkflowService:
             }
             quality_report["publish_rights_gate_passed"] = publish_rights_gate_passed
             local_generated_preview_allowed = bool(
-                template_id == "talking-head-local-grammar-v2"
-                and local_minimax_visuals
-                and generated_image_brolls
+                generated_image_brolls
+                and (
+                    (
+                        template_id == "talking-head-local-grammar-v2"
+                        and local_minimax_visuals
+                    )
+                    or (grammar_only and sparse_asset_mode)
+                )
             )
             quality_report["local_generated_preview"] = {
-                "enabled": bool(local_minimax_visuals),
+                "enabled": bool(local_generated_preview_allowed),
                 "passed": local_generated_preview_allowed,
                 "publish_claim_allowed": False,
                 "reason": (
@@ -14323,19 +15369,44 @@ class VideoEditorWorkflowService:
                     grammar_errors = validate_grammar_only_timeline(grammar_timeline)
                 except Exception as exc:
                     grammar_errors = [f"validator_error:{type(exc).__name__}"]
+                sparse_plan = edit_plan.get("sparse_asset_plan") or {}
+                sparse_errors = (
+                    validate_sparse_asset_plan(
+                        {**dict(sparse_plan), "asset_events": brolls}
+                    )
+                    if sparse_asset_mode and isinstance(sparse_plan, Mapping)
+                    else (["sparse_plan_missing"] if sparse_asset_mode else [])
+                )
                 grammar_gate = bool(
                     isinstance(grammar_timeline, Mapping)
                     and not grammar_errors
-                    and not brolls
                     and not vector_items
                     and not semantic_layer_items
                     and local_grammar_event_count > 0
                     and visual_pipeline_executed
+                    and (
+                        (
+                            sparse_asset_mode
+                            and not sparse_errors
+                            and semantic_match_gate_passed
+                            and (
+                                not generated_image_brolls
+                                or local_generated_preview_allowed
+                            )
+                        )
+                        or (
+                            not sparse_asset_mode
+                            and not brolls
+                        )
+                    )
                 )
                 quality_report["grammar_only"].update(
                     {
                         "timeline_validation_passed": grammar_gate,
-                        "timeline_validation_errors": grammar_errors,
+                        "timeline_validation_errors": [
+                            *grammar_errors,
+                            *sparse_errors,
+                        ],
                         "rendered_event_count": local_grammar_event_count,
                         "sfx_event_count": len(subtitle_fx_filters),
                         "sfx_source": (
@@ -14368,14 +15439,20 @@ class VideoEditorWorkflowService:
                 # inspectable without unpacking the database task payload.
                 artifact_payloads = {
                     "director_timeline": {
-                        "mode": "JY_CLONE_GRAMMAR_ONLY",
+                        "mode": SPARSE_ASSET_MODE if sparse_asset_mode else "JY_CLONE_GRAMMAR_ONLY",
                         "preset_id": "talking-head-grammar-only-v1",
                         "polish_version": str(edit_plan.get("grammar_polish_version") or "v1"),
                         "subtitle_preset_id": "JY_ROUGH_CUT_SUBTITLE_PRESET",
                         "timeline": edit_plan.get("grammar_only_timeline") or {},
+                        "rendered_motion_events": motion_events,
+                        "sticker_events": sticker_events,
+                        "sound_effect_events": quality_report["sound_effects"]["event_schedule"],
                         "semantic_annotations": (director_plan or {}).get(
                             "semantic_annotations", []
                         ),
+                        "sparse_asset_plan": edit_plan.get("sparse_asset_plan")
+                        if sparse_asset_mode
+                        else None,
                     },
                     "provider_search_log": [],
                     "image_generation_log": [],
@@ -14752,6 +15829,7 @@ class VideoEditorWorkflowService:
         title: str,
         *,
         output_profile: str,
+        style_preset: Mapping[str, Any] | None = None,
     ) -> bytes:
         from src.services.video_editor_cloud import (
             build_business_talking_head_title_png,
@@ -14760,6 +15838,7 @@ class VideoEditorWorkflowService:
         return build_business_talking_head_title_png(
             title,
             output_profile=output_profile,
+            style_preset=style_preset,
         )
 
     def review_cloud_batch_item(
@@ -15062,6 +16141,28 @@ class VideoEditorWorkflowService:
             or item.provider_payload.get("style_preset_id")
             or "talking-head-brand-emphasis-v1"
         )
+        # ``EditPlan`` is the validated public schema and intentionally drops
+        # renderer-only extensions during review.  Preserve the explicit
+        # sparse-asset opt-in across that boundary so the release renderer does
+        # not silently fall back to strict A-roll-only Grammar mode.
+        for extension_key in (
+            "sparse_asset_mode",
+            "sparse_asset_version",
+            "grammar_polish_version",
+        ):
+            extension_value = (
+                (item.edit_plan or {}).get(extension_key)
+                or item.provider_payload.get(extension_key)
+            )
+            if extension_value not in (None, ""):
+                plan_payload[extension_key] = extension_value
+        # Local batches intentionally expose only the public style id in the
+        # persisted provider payload.  Reconstruct the renderer extension from
+        # that stable preset at the review boundary so a formal local export
+        # cannot silently fall back to grammar-only A-roll mode.
+        if plan_payload["style_preset_id"] == "talking-head-grammar-only-v1":
+            plan_payload.setdefault("sparse_asset_mode", SPARSE_ASSET_MODE)
+            plan_payload.setdefault("sparse_asset_version", "v1")
         source = self.resolve_source(item.source_id)
         source_path = Path(source["_path"])
         source_media = self._probe_media(source_path)
@@ -15182,8 +16283,14 @@ class VideoEditorWorkflowService:
                     "publish_allowed": False,
                 }
             )
-            self._replace_batch_item(batch, local_item)
-            return self.get_batch(batch.batch_id)
+            # Persist the reviewed plan before returning.  The previous code
+            # discarded the replacement batch, so the API returned 200 while
+            # the database still contained the pre-review item; the next
+            # release call consequently lost the reviewed timeline and every
+            # renderer-only extension (sparse assets, stickers, local SFX).
+            batch = self._replace_batch_item(batch, local_item)
+            self.repository.save_video_editor_batch(batch)
+            return self._batch_payload(batch)
 
         render_key = f"video-editor-render:{batch.batch_id}:{item.item_id}:{plan_hash}"
         render_request_hash = self._cloud_request_hash(

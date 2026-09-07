@@ -1,0 +1,17 @@
+{
+  "asset_id": "sfx-success-ping-local",
+  "kind": "sound_effect",
+  "name": "success_ping",
+  "stored_name": "sfx-ding.wav",
+  "media_type": "audio/wav",
+  "source_provider": "VideoInsight",
+  "source_type": "project_local_asset",
+  "asset_origin": "project_owned_local_generated_asset",
+  "rights_holder": "VideoInsight project",
+  "authorization_status": "confirmed",
+  "rights_status": "project_owned_local_generated",
+  "publish_licensed": true,
+  "license_name": "Project-owned local generated audio",
+  "source_url": "",
+  "sha256": "ba16079d6ffde2929669d840cf17779fea0e84575786d56fb277cc7739c5563f"
+}
