@@ -54,8 +54,7 @@
     "server_state": "ready",
     "control_plane_sha256": "110a36b8f168ea0a9aeebd83eb9269f9ab9f20f86516aab84441e40b3626bd05",
     "windows_state": "pending",
-    "installer_sha256": null,
-    "reset_reason": "attempted marker 残留 0 产物；手动解锁 0.2.45 7 步真实构建"
+    "installer_sha256": null
   },
   "completed_releases": [
     {
