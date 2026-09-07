@@ -50,7 +50,7 @@
   "current_candidate": null,
   "release_in_progress": {
     "version": "0.2.45",
-    "source_commit": "9e4c234f89ef27cde1c91923a19e7ff16560b928",
+    "source_commit": "4fd49152a809875950311b12db866b51feb194c9",
     "server_state": "ready",
     "control_plane_sha256": "110a36b8f168ea0a9aeebd83eb9269f9ab9f20f86516aab84441e40b3626bd05",
     "windows_state": "pending",
