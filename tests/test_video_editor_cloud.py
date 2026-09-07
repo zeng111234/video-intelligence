@@ -752,7 +752,13 @@ def test_qwen_semantic_caption_groups_preserve_exact_asr_text():
     ]
     assert preview["caption_group_source"] == "qwen_semantic"
     assert [item.model_dump() for item in plan.caption_emphasis] == [
-        {"segment_index": 0, "term": "80%", "kind": "number"}
+        {
+            "segment_index": 0,
+            "term": "80%",
+            "kind": "number",
+            "semantic_role": "",
+            "importance": 0.0,
+        }
     ]
     assert preview["cues"][0]["emphasis_range"] == {
         "line_index": 0,
