@@ -53,7 +53,7 @@
     "source_commit": "ca1424ce639185d86890567fe2d67bf0d8dd81af",
     "server_state": "ready",
     "control_plane_sha256": "110a36b8f168ea0a9aeebd83eb9269f9ab9f20f86516aab84441e40b3626bd05",
-    "windows_state": "building",
+    "windows_state": "attempted",
     "installer_sha256": null
   },
   "completed_releases": [
