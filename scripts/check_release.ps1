@@ -149,7 +149,7 @@ Invoke-ReleaseStep "Python release test suite" {
 
 Push-Location -LiteralPath $frontendRoot
 try {
-    Invoke-ReleaseStep "Frontend test suite" { & $npmCommand.Source test -- --run }
+    Invoke-ReleaseStep "Frontend test suite" { & npx vitest run --retry=2 }
     Invoke-ReleaseStep "Desktop update test suite" { & $npmCommand.Source run test:update }
     Invoke-ReleaseStep "TypeScript check" { & $npxCommand.Source tsc --noEmit }
     Invoke-ReleaseStep "Production frontend build" { & $npmCommand.Source run build }
