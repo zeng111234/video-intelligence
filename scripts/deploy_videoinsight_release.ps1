@@ -118,6 +118,7 @@ if ($shouldDeployControl) {
         $remoteArchive = "$remoteDirectory/$(Split-Path -Leaf $controlArchive)"
         Invoke-Ssh -RemoteCommand "mkdir -m 700 -- $remoteDirectory" | Out-Null
         Send-StagedFile -LocalPath $controlArchive -RemotePath $remoteArchive
+        Invoke-Ssh -RemoteCommand "chmod 600 -- $remoteArchive"
         Invoke-Ssh -RemoteCommand "sudo -n $gateway deploy-control-plane $Version $controlSha $remoteArchive"
         $verifiedHealth = Get-JsonWithSingleRetry -Uri 'https://xmt.syszr.cn/health'
         if ([string]$verifiedHealth.release_version -ne $Version) {
@@ -159,6 +160,7 @@ if ($shouldDeployDesktop) {
         Invoke-Ssh -RemoteCommand "mkdir -m 700 -- $remoteDirectory" | Out-Null
         Send-StagedFile -LocalPath $installerPath -RemotePath $remoteInstaller
         Send-StagedFile -LocalPath $manifestPath -RemotePath $remoteManifest
+        Invoke-Ssh -RemoteCommand "chmod 600 -- $remoteInstaller $remoteManifest"
         Invoke-Ssh -RemoteCommand "sudo -n $gateway publish-desktop $Version $installerSha $manifestSha $remoteInstaller $remoteManifest"
         $verifiedLatest = Get-JsonWithSingleRetry -Uri 'https://xmt.syszr.cn/desktop-updates/latest.json'
         if (
