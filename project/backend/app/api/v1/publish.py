@@ -1022,7 +1022,9 @@ def get_asset_media(name: str = Query(..., min_length=1)):
         ".m4v": "video/x-m4v",
     }
     return FileResponse(
-        path, media_type=media_types.get(path.suffix.lower(), "video/mp4")
+        path,
+        media_type=media_types.get(path.suffix.lower(), "video/mp4"),
+        content_disposition_type="inline",
     )
 
 

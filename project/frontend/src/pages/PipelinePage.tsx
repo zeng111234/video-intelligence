@@ -127,6 +127,13 @@ type CandidateSortMode = "default" | "likes" | "comments" | "shares";
 
 const PROFILE_STORAGE_KEY = "pipeline.lastProfileId";
 const CANDIDATE_LIST_PREVIEW_LIMIT = 10;
+const DISPLAY_TITLE_MAX_LENGTH = 120;
+
+function displayTitleForCandidate(title: string): string {
+  const characters = Array.from(title.trim());
+  if (characters.length <= DISPLAY_TITLE_MAX_LENGTH) return characters.join("");
+  return `${characters.slice(0, DISPLAY_TITLE_MAX_LENGTH - 1).join("").trimEnd()}…`;
+}
 
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: "抖音",
@@ -646,6 +653,7 @@ export default function PipelinePage() {
   const [avatarId, setAvatarId] = useState("");
   const [voiceId, setVoiceId] = useState("");
   const [speechRate, setSpeechRate] = useState(1);
+  const [workspaceSpeechRate, setWorkspaceSpeechRate] = useState(1);
 
   const [platforms, setPlatforms] = useState<PublishPlatformCapability[]>([]);
   const [accounts, setAccounts] = useState<PublishAccount[]>([]);
@@ -674,6 +682,8 @@ export default function PipelinePage() {
   const [workspace, setWorkspace] = useState<ProductionWorkspace | null>(null);
   const [reviewText, setReviewText] = useState("");
   const [reviewNote, setReviewNote] = useState("");
+  const [reviewSkillPrompt, setReviewSkillPrompt] = useState("");
+  const [reviewTargetLength, setReviewTargetLength] = useState(240);
   const [creativePlan, setCreativePlan] = useState<ProductionCreativePlan | null>(null);
   const [creativePlanExpanded, setCreativePlanExpanded] = useState(false);
   const [candidatePage, setCandidatePage] = useState(1);
@@ -880,6 +890,7 @@ export default function PipelinePage() {
   const profileVoice = assets.find((asset) => asset.asset_id === activeProfile?.voice_id);
   useEffect(() => {
     setSpeechRate(activeProfile?.speech_rate ?? 1);
+    setWorkspaceSpeechRate(activeProfile?.speech_rate ?? 1);
   }, [activeProfile?.profile_id, activeProfile?.speech_rate]);
   const workspaceProfileLocked = Boolean(
     workspace?.items.some((item) => ["avatar", "editing", "output", "publish", "completed"].includes(item.stage || "")),
@@ -933,6 +944,9 @@ export default function PipelinePage() {
     if (!batchId) return null;
     try {
       const data = await getProductionBatchWorkspace(batchId);
+      if (!data || !data.batch || !Array.isArray(data.items)) {
+        throw new Error("工作台数据暂时不完整，请稍后刷新。 ");
+      }
       setWorkspace(data);
       setSelectedBatchId(batchId);
       setSelectedRunId((current) => (
@@ -965,6 +979,8 @@ export default function PipelinePage() {
     setSelectedRunId("");
     setReviewText("");
     setReviewNote("");
+    setReviewSkillPrompt("");
+    setReviewTargetLength(240);
     setCreativePlan(null);
     setPublishTitle("");
     setPublishDescription("");
@@ -974,6 +990,37 @@ export default function PipelinePage() {
     setExpandedWorkspaceStage(null);
     setMaterialSummaryExpanded(true);
     navigate("/pipeline", { replace: true });
+  }, [navigate]);
+
+  const openSavedMaterialSearch = useCallback((crawlerBatchId: string) => {
+    // A saved search is a separate workspace. Clear the active production
+    // workspace before changing the URL so a failed run cannot keep covering
+    // the material-selection view while the saved batch is being restored.
+    setWorkspace(null);
+    setSelectedBatchId("");
+    setSelectedRunId("");
+    setReviewText("");
+    setReviewNote("");
+    setReviewSkillPrompt("");
+    setReviewTargetLength(240);
+    setCreativePlan(null);
+    setPublishTitle("");
+    setPublishDescription("");
+    setPublishTags("");
+    setActionError("");
+    setActionMessage("");
+    setExpandedWorkspaceStage(null);
+    setMaterialSummaryExpanded(true);
+    setMaterialSearchBatch(null);
+    setMaterialSearchProgress(null);
+    setMaterialSearchQueueId(null);
+    setMaterialSearchQueue(null);
+    setMaterialSearchComplete(false);
+    setCandidates([]);
+    setSelectedCandidateId("");
+    setPreparedCandidateId("");
+    setCrawlerReason(null);
+    navigate(`/pipeline?crawler_batch_id=${encodeURIComponent(crawlerBatchId)}`, { replace: true });
   }, [navigate]);
 
   const restoreMaterialSearchBatch = useCallback(async (
@@ -1225,6 +1272,8 @@ export default function PipelinePage() {
       setCreativePlan(null);
     }
     setReviewNote("");
+    setReviewSkillPrompt("");
+    setReviewTargetLength(240);
   }, [activeItem, activeReview, currentStage, nextAction]);
 
   const crawlerRequest = useMemo<CrawlerSearchRequest>(() => ({
@@ -1978,7 +2027,7 @@ export default function PipelinePage() {
           ? {
               source_type: "candidate" as const,
               source_value: baseCandidate!.video_id,
-              display_title: baseCandidate!.title,
+              display_title: displayTitleForCandidate(baseCandidate!.title),
             }
           : {
               source_type: sourceMode,
@@ -1992,7 +2041,7 @@ export default function PipelinePage() {
           ? automaticCandidatePool.map((candidate) => ({
               source_type: "candidate" as const,
               source_value: candidate.video_id,
-              display_title: candidate.title,
+              display_title: displayTitleForCandidate(candidate.title),
               candidate_role: "primary" as const,
             }))
           : [item]
@@ -2046,6 +2095,8 @@ export default function PipelinePage() {
           run_id: activeItem.run_id,
           approved_text: stage === "output" || stage === "publish" ? undefined : reviewText.trim(),
           note: reviewNote.trim(),
+          skill_prompt: stage === "transcript" ? reviewSkillPrompt.trim() : undefined,
+          target_length: stage === "transcript" ? reviewTargetLength : undefined,
           creative_plan: stage === "script" && creativePlan ? {
             hook: creativePlan.hook.trim(),
             key_points: creativePlan.key_points.map((item) => item.trim()).filter(Boolean),
@@ -2577,6 +2628,43 @@ export default function PipelinePage() {
     );
   }
 
+  const renderWorkspaceSpeedControl = () => workspace && activeProfile ? (
+    <div className="workspace-profile-speed" aria-label="本条视频语速设置">
+      <div className="workspace-profile-speed-heading">
+        <div>
+          <Text strong>调整本条视频语速</Text>
+          <Text type="secondary">
+            {workspaceProfileLocked
+              ? "数字人已开始制作，需要重新生成后才能调整。"
+              : "拖动滑杆调整，确认后在生成数字人时生效。"}
+          </Text>
+        </div>
+        <strong className="workspace-profile-speed-value">{workspaceSpeechRate.toFixed(2)}×</strong>
+      </div>
+      <Slider
+        ariaLabelForHandle="本条视频语速"
+        min={SPEECH_RATE_MIN}
+        max={SPEECH_RATE_MAX}
+        step={SPEECH_RATE_STEP}
+        marks={SPEECH_RATE_MARKS}
+        value={workspaceSpeechRate}
+        disabled={workspaceProfileLocked || busy}
+        tooltip={{
+          formatter: (value) =>
+            typeof value === "number" ? `${value.toFixed(2)} 倍` : "",
+        }}
+        onChange={(value) => {
+          const next = Array.isArray(value) ? value[0] : value;
+          if (typeof next === "number") setWorkspaceSpeechRate(next);
+        }}
+        onChangeComplete={(value) => {
+          const next = Array.isArray(value) ? value[0] : value;
+          if (typeof next === "number") void changeWorkspaceSpeechRate(next);
+        }}
+      />
+    </div>
+  ) : null;
+
   const renderProfileContent = () => activeProfile ? (
         <div className="profile-summary">
           {workspace ? (
@@ -2627,33 +2715,6 @@ export default function PipelinePage() {
                         label: profile.name,
                       }))}
                       onChange={(value) => void changeWorkspaceProfile(value)}
-                    />
-                  </div>
-                  <div className="workspace-profile-speed">
-                    <div>
-                      <Text strong>数字人语速</Text>
-                      <Text type="secondary">
-                        {workspaceProfileLocked
-                          ? "数字人已开始制作，需要重新生成后才能调整。"
-                          : "拖动调整，生成开始后不能修改。"}
-                      </Text>
-                    </div>
-                    <Slider
-                      ariaLabelForHandle="本条视频语速"
-                      min={SPEECH_RATE_MIN}
-                      max={SPEECH_RATE_MAX}
-                      step={SPEECH_RATE_STEP}
-                      marks={SPEECH_RATE_MARKS}
-                      value={activeProfile.speech_rate ?? 1}
-                      disabled={workspaceProfileLocked || busy}
-                      tooltip={{
-                        formatter: (value) =>
-                          typeof value === "number" ? `${value.toFixed(2)} 倍` : "",
-                      }}
-                      onChangeComplete={(value) => {
-                        const next = Array.isArray(value) ? value[0] : value;
-                        if (typeof next === "number") void changeWorkspaceSpeechRate(next);
-                      }}
                     />
                   </div>
                 </div>
@@ -2824,9 +2885,7 @@ export default function PipelinePage() {
                     key="resume-material-search"
                     type="link"
                     onClick={() => {
-                      void restoreMaterialSearchBatch(recent.batch_id, "", true).catch((error) => {
-                        setActionError((error as Error).message || "读取已保存的素材失败");
-                      });
+                      openSavedMaterialSearch(recent.batch_id);
                     }}
                     aria-label={`继续挑选：${recent.keyword}`}
                   >
@@ -3526,7 +3585,7 @@ export default function PipelinePage() {
                         <Text type="secondary">
                           {nextAction === "review_transcript"
                             ? "不用逐字修正，只需确认事实没有被改动"
-                            : "确认后开始制作；需要换出镜人可在下方 IP 配方中更换"}
+                            : "确认后开始制作；形象、声音和语速可在本页生成前调整"}
                         </Text>
                       </div>
                       <TextArea
@@ -3538,6 +3597,36 @@ export default function PipelinePage() {
                         placeholder={nextAction === "review_transcript" ? "AI 会先处理明显错字；这里只需确认金额、人名和原意" : "核对并提交最终口播稿"}
                       />
                     </div>
+                    {nextAction === "review_transcript" && (
+                      <div className="rewrite-preferences">
+                        <div className="rewrite-preferences-heading">
+                          <Text strong>本次 AI 改写设置</Text>
+                          <Text type="secondary">只影响表达方式和篇幅，不改变原文事实</Text>
+                        </div>
+                        <Space wrap>
+                          <Text type="secondary">目标字数</Text>
+                          <Select
+                            aria-label="改写目标字数"
+                            value={reviewTargetLength}
+                            options={[100, 150, 200, 240, 300, 500, 800].map((value) => ({
+                              value,
+                              label: `${value}字`,
+                            }))}
+                            onChange={setReviewTargetLength}
+                            style={{ width: 112 }}
+                          />
+                        </Space>
+                        <TextArea
+                          aria-label="智能创作客户 Skill"
+                          rows={4}
+                          maxLength={8000}
+                          showCount
+                          value={reviewSkillPrompt}
+                          onChange={(event) => setReviewSkillPrompt(event.target.value)}
+                          placeholder="可粘贴客户的 Markdown Skill，例如：语气、结构、行业术语、禁用词和输出格式要求。系统会把它当作本次改写偏好，不会覆盖事实或合规规则。"
+                        />
+                      </div>
+                    )}
                     {nextAction === "review_script" && creativePlan ? (
                       <details
                         className="creative-plan-details"
@@ -3552,48 +3641,65 @@ export default function PipelinePage() {
                           <span>可选修改</span>
                         </summary>
                         <div className="creative-plan-fields">
-                          <Text type="secondary">系统已根据最终口播稿自动整理；不修改也可以直接确认。</Text>
-                          <Input
-                            aria-label="开头吸引点"
-                            value={creativePlan.hook}
-                            placeholder="用一句话说清客户为什么要继续看"
-                            maxLength={160}
-                            onChange={(event) => setCreativePlan((current) => current ? { ...current, hook: event.target.value } : current)}
-                          />
-                          <TextArea
-                            aria-label="讲解要点"
-                            rows={3}
-                            value={creativePlan.key_points.join("\n")}
-                            placeholder="每行一个讲解要点"
-                            maxLength={900}
-                            onChange={(event) => setCreativePlan((current) => current ? {
-                              ...current,
-                              key_points: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean).slice(0, 5),
-                            } : current)}
-                          />
-                          <Input
-                            aria-label="行动引导"
-                            value={creativePlan.call_to_action}
-                            placeholder="告诉客户下一步该做什么"
-                            maxLength={160}
-                            onChange={(event) => setCreativePlan((current) => current ? { ...current, call_to_action: event.target.value } : current)}
-                          />
-                          <TextArea
-                            aria-label="三个画面段落"
-                            rows={3}
-                            value={creativePlan.visual_sections.join("\n")}
-                            placeholder="每行一个画面段落，例如：开场人物口播、产品或案例、收尾行动引导"
-                            maxLength={540}
-                            onChange={(event) => setCreativePlan((current) => current ? {
-                              ...current,
-                              visual_sections: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean).slice(0, 3),
-                            } : current)}
-                          />
-                          <Input
-                            value={reviewNote}
-                            onChange={(event) => setReviewNote(event.target.value)}
-                            placeholder="补充备注（可选）"
-                          />
+                          <Text type="secondary">方案已经按最终口播稿整理好；不调整时可直接确认。</Text>
+                          <label className="creative-plan-field">
+                            <Text strong>开头吸引点</Text>
+                            <Input
+                              aria-label="开头吸引点"
+                              value={creativePlan.hook}
+                              placeholder="用一句话说清客户为什么要继续看"
+                              maxLength={160}
+                              onChange={(event) => setCreativePlan((current) => current ? { ...current, hook: event.target.value } : current)}
+                            />
+                          </label>
+                          <label className="creative-plan-field">
+                            <Text strong>讲解要点</Text>
+                            <Text type="secondary">每行一个要点，最多 5 个</Text>
+                            <TextArea
+                              aria-label="讲解要点"
+                              rows={3}
+                              value={creativePlan.key_points.join("\n")}
+                              placeholder="每行一个讲解要点"
+                              maxLength={900}
+                              onChange={(event) => setCreativePlan((current) => current ? {
+                                ...current,
+                                key_points: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean).slice(0, 5),
+                              } : current)}
+                            />
+                          </label>
+                          <label className="creative-plan-field">
+                            <Text strong>行动引导</Text>
+                            <Input
+                              aria-label="行动引导"
+                              value={creativePlan.call_to_action}
+                              placeholder="告诉客户下一步该做什么"
+                              maxLength={160}
+                              onChange={(event) => setCreativePlan((current) => current ? { ...current, call_to_action: event.target.value } : current)}
+                            />
+                          </label>
+                          <label className="creative-plan-field">
+                            <Text strong>画面段落</Text>
+                            <Text type="secondary">每行一个段落，最多 3 个</Text>
+                            <TextArea
+                              aria-label="三个画面段落"
+                              rows={3}
+                              value={creativePlan.visual_sections.join("\n")}
+                              placeholder="例如：开场人物口播、产品或案例、收尾行动引导"
+                              maxLength={540}
+                              onChange={(event) => setCreativePlan((current) => current ? {
+                                ...current,
+                                visual_sections: event.target.value.split("\n").map((item) => item.trim()).filter(Boolean).slice(0, 3),
+                              } : current)}
+                            />
+                          </label>
+                          <label className="creative-plan-field">
+                            <Text strong>补充备注 <Text type="secondary">（可选）</Text></Text>
+                            <Input
+                              value={reviewNote}
+                              onChange={(event) => setReviewNote(event.target.value)}
+                              placeholder="补充这次创作需要特别注意的要求"
+                            />
+                          </label>
                         </div>
                       </details>
                     ) : (
@@ -3609,12 +3715,6 @@ export default function PipelinePage() {
                 {stageIndex(currentStage) === 4 && (
                   <div className="publish-review">
                     <Text strong>发布信息与账号状态</Text>
-                    <Alert
-                      type="warning"
-                      showIcon
-                      message="请遵守平台规则并使用已授权内容"
-                      description="平台审核、限流或封禁风险无法由软件消除；请在发布前人工核对内容和账号操作。"
-                    />
                     {activeItem?.publish.draft && !["succeeded", "outcome_unknown"].includes(activeItem.publish.status) ? (
                       <Space direction="vertical" size={10} style={{ width: "100%" }}>
                         {publishPagePrepared && (
@@ -3729,6 +3829,8 @@ export default function PipelinePage() {
                 <Button onClick={openProfileCreator}>去设置</Button>
               </div>
             )}
+
+            {workspace && renderWorkspaceSpeedControl()}
 
             {workspace ? (
               <div className="workspace-primary-actions">
@@ -5098,6 +5200,24 @@ export default function PipelinePage() {
           font-size: 16px;
           line-height: 1.75;
         }
+        .rewrite-preferences {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          padding: 12px 14px;
+          border: 1px solid #ece8f8;
+          border-radius: 10px;
+          background: #fcfbff;
+        }
+        .rewrite-preferences-heading {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+        }
+        .rewrite-preferences-heading .ant-typography:last-child {
+          text-align: right;
+        }
         .creative-plan-details {
           margin-top: 2px;
           border-top: 1px solid #eceef4;
@@ -5137,6 +5257,12 @@ export default function PipelinePage() {
           border-radius: 12px;
           background: #faf9ff;
         }
+        .creative-plan-field {
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+        }
+        .creative-plan-field .ant-typography-secondary { font-size: 12px; }
         .search-empty {
           display: flex;
           flex-direction: column;
@@ -5676,7 +5802,17 @@ export default function PipelinePage() {
           gap: 6px;
         }
         .profile-name-field .ant-typography-secondary { font-size: 12px; }
-        .workspace-profile-speed,
+        .workspace-profile-speed {
+          display: flex;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 8px;
+          margin-top: 14px;
+          padding: 14px 16px 8px;
+          border: 1px solid #dcd2fa;
+          border-radius: 12px;
+          background: linear-gradient(135deg, #fbfaff, #fff);
+        }
         .profile-speed-field {
           display: flex;
           align-items: center;
@@ -5688,17 +5824,33 @@ export default function PipelinePage() {
           border-radius: 10px;
           background: #fff;
         }
-        .workspace-profile-speed > div,
+        .workspace-profile-speed-heading {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          width: 100%;
+        }
+        .workspace-profile-speed-heading > div,
         .profile-speed-field > div {
           display: grid;
           gap: 2px;
           min-width: 0;
         }
+        .workspace-profile-speed-value {
+          flex: 0 0 auto;
+          color: #6843d6;
+          font-size: 20px;
+          line-height: 1;
+        }
         .workspace-profile-speed .ant-typography-secondary,
         .profile-speed-field .ant-typography-secondary {
           font-size: 12px;
         }
-        .workspace-profile-speed .ant-slider,
+        .workspace-profile-speed .ant-slider {
+          width: 100%;
+          margin: 8px 8px 16px;
+        }
         .profile-speed-field .ant-slider {
           flex: 1;
           min-width: 180px;

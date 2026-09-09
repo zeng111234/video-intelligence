@@ -1177,6 +1177,7 @@ export interface CopywritingDetailResponse extends CopywritingSummaryResponse {
   selling_points: string;
   call_to_action: string;
   style_prompt: string;
+  skill_prompt: string;
 }
 
 export interface CopywritingCapabilitiesResponse {
@@ -1204,6 +1205,8 @@ export interface CopywritingGenerateRequest {
   selling_points?: string;
   call_to_action?: string;
   style_prompt?: string;
+  skill_prompt?: string;
+  target_length?: number;
   tone?: string;
   variant_count?: number;
 }
@@ -1212,6 +1215,8 @@ export interface CopywritingRewriteRequest {
   source_text: string;
   target_audience?: string;
   style_prompt?: string;
+  skill_prompt?: string;
+  target_length?: number;
   tone?: string;
   variant_count?: number;
 }
@@ -1816,6 +1821,10 @@ export interface VideoEditorDirectorPlan {
     style_id: string;
     semantic_kind: string;
     semantic_text: string;
+    visual_verb?: "reveal" | "compare" | "accumulate" | "flow" | "impact" | "resolve" | "warning" | string;
+    visual_language?: string;
+    visual_action?: string;
+    visual_variant?: number;
     fact?: string;
     anchor?: string;
     presentation?: string;

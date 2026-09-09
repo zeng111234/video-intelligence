@@ -1722,6 +1722,29 @@ describe("PipelinePage customer workspace", () => {
     expect(createCrawlerBatch).not.toHaveBeenCalled();
   });
 
+  it("leaves an active production workspace before continuing a saved material search", async () => {
+    const savedBatch = {
+      ...crawlerBatch([candidate]),
+      batch_id: "saved-crawler-batch",
+      keyword: "中学辅导",
+    };
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [productionBatch] });
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(transcriptWorkspace);
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [savedBatch], total: 1 });
+    vi.mocked(getCrawlerBatchForSelection).mockResolvedValue(savedBatch);
+
+    renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
+
+    expect(await screen.findByLabelText("AI 校对后的转写")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /待处理任务 1/ }));
+    fireEvent.click(screen.getByRole("button", { name: "继续挑选：中学辅导" }));
+
+    await waitFor(() => expect(getCrawlerBatchForSelection).toHaveBeenCalledWith("saved-crawler-batch"));
+    expect(await screen.findByText("本次找到的全部素材（1）")).toBeTruthy();
+    expect(screen.queryByLabelText("AI 校对后的转写")).toBeNull();
+    expect(createCrawlerBatch).not.toHaveBeenCalled();
+  });
+
   it("preserves an explicitly selected low-threshold crawler candidate during handoff", async () => {
     const ranked = [1, 2, 3].map((rank) => ({
       ...candidate,
@@ -1775,6 +1798,10 @@ describe("PipelinePage customer workspace", () => {
     expect(screen.getByText(/00:03–00:06/)).toBeTruthy();
     expect(screen.getByText(/置信度 42% · 背景噪声/)).toBeTruthy();
     fireEvent.change(editor, { target: { value: "人工确认后的最终转写" } });
+    fireEvent.change(screen.getByLabelText("智能创作客户 Skill"), {
+      target: { value: "语气像老板聊天；先讲结论，再给步骤。" },
+    });
+    expect(screen.getAllByLabelText("改写目标字数").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole("button", { name: "确认转写并生成去重口播稿" }));
 
     await waitFor(() => {
@@ -1782,7 +1809,11 @@ describe("PipelinePage customer workspace", () => {
         "production-batch-1",
         expect.objectContaining({
           stage: "transcript",
-          items: [expect.objectContaining({ approved_text: "人工确认后的最终转写" })],
+          items: [expect.objectContaining({
+            approved_text: "人工确认后的最终转写",
+            skill_prompt: "语气像老板聊天；先讲结论，再给步骤。",
+            target_length: 240,
+          })],
         }),
       );
     });
@@ -1852,7 +1883,7 @@ describe("PipelinePage customer workspace", () => {
 
     const creativePlanDetails = (await screen.findByText("查看创作拆解")).closest("details") as HTMLDetailsElement;
     expect(creativePlanDetails.open).toBe(false);
-    expect(screen.getByText("确认后开始制作；需要换出镜人可在下方 IP 配方中更换")).toBeTruthy();
+    expect(screen.getByText("确认后开始制作；形象、声音和语速可在本页生成前调整")).toBeTruthy();
     expect(screen.getByText("文案检查结果")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /当前 IP 配方/ }));
     expect(screen.getAllByLabelText("更换本条视频的出镜人").length).toBeGreaterThan(0);
@@ -2161,8 +2192,8 @@ describe("PipelinePage customer workspace", () => {
     renderPage("/pipeline?batch=production-batch-1&run=pipeline-run-1");
 
     expect(await screen.findByText("发布信息与账号状态")).toBeTruthy();
-    expect(screen.getByText("请遵守平台规则并使用已授权内容")).toBeTruthy();
-    expect(screen.getByText(/平台审核、限流或封禁风险无法由软件消除/)).toBeTruthy();
+    expect(screen.queryByText("请遵守平台规则并使用已授权内容")).toBeNull();
+    expect(screen.queryByText(/平台审核、限流或封禁风险无法由软件消除/)).toBeNull();
     expect((screen.getByLabelText("发布标题") as HTMLInputElement).value).toBe("客户可见标题");
     expect((screen.getByLabelText("发布描述") as HTMLTextAreaElement).value).toBe("客户可见发布描述");
     expect((screen.getByLabelText("发布标签") as HTMLInputElement).value).toBe("本地获客、真实案例");
@@ -2382,9 +2413,7 @@ describe("PipelinePage customer workspace", () => {
       },
     };
     vi.mocked(listProductionBatches).mockResolvedValue({ items: [productionBatch] });
-    vi.mocked(getProductionBatchWorkspace)
-      .mockResolvedValueOnce(preparedWorkspace)
-      .mockResolvedValueOnce(completedWorkspace);
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(preparedWorkspace);
     vi.mocked(recordManualPublishResult).mockResolvedValue({ task_id: "publish-existing" } as never);
     vi.mocked(confirmPublishTaskAuto).mockResolvedValue({ task_id: "publish-existing" } as never);
 
@@ -2403,6 +2432,7 @@ describe("PipelinePage customer workspace", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /我已手动发布/ }));
     expect((await screen.findAllByText("确认已经在快手发布？")).length).toBeGreaterThan(0);
+    vi.mocked(getProductionBatchWorkspace).mockResolvedValue(completedWorkspace);
     fireEvent.click(screen.getByRole("button", { name: "确认已发布" }));
 
     await waitFor(() => expect(recordManualPublishResult).toHaveBeenCalledWith(

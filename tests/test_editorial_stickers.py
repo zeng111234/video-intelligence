@@ -5,10 +5,11 @@ from PIL import Image
 from src.services.editorial_stickers import (
     build_editorial_sticker_events,
     render_editorial_sticker,
+    render_editorial_visual_verb,
 )
 
 
-def test_events_are_transcript_grounded_and_sparse_for_unseen_copy(tmp_path: Path):
+def test_abstract_roles_do_not_create_cartoon_stickers(tmp_path: Path):
     segments = [
         {"start": 0, "end": 4, "source_text": "陌生主题产生结果", "semantic_text": "产生结果", "semantic_roles": ["CONCLUSION"], "keyword_candidates": ["产生结果"]},
         {"start": 12, "end": 16, "source_text": "步骤一完成操作", "semantic_text": "步骤一", "semantic_roles": ["STEP"], "keyword_candidates": ["步骤一"]},
@@ -20,14 +21,7 @@ def test_events_are_transcript_grounded_and_sparse_for_unseen_copy(tmp_path: Pat
 
     events = build_editorial_sticker_events(segments, duration_seconds=70, max_events=5)
 
-    assert 0 < len(events) <= 5
-    assert all(event["semantic_text"] in event["source_text"] for event in events)
-    assert all(event["asset_category"] == "custom_semantic_sticker" for event in events)
-    assert all(event["source"] == "VideoInsight project-owned editorial vector" for event in events)
-    assert all(
-        events[index + 1]["start"] - events[index]["start"] >= 8
-        for index in range(len(events) - 1)
-    )
+    assert events == []
 
 
 def test_editorial_sticker_is_a_custom_rgba_vector(tmp_path: Path):
@@ -37,6 +31,16 @@ def test_editorial_sticker_is_a_custom_rgba_vector(tmp_path: Path):
     with Image.open(output) as image:
         assert image.mode == "RGBA"
         assert image.size == (300, 220)
+        assert image.getbbox() is not None
+
+
+def test_visual_verb_is_minimal_transparent_linework(tmp_path: Path):
+    output = tmp_path / "impact.png"
+    render_editorial_visual_verb({"visual_verb": "impact"}, output)
+
+    with Image.open(output) as image:
+        assert image.mode == "RGBA"
+        assert image.size == (640, 180)
         assert image.getbbox() is not None
 
 
@@ -63,6 +67,8 @@ def test_offer_and_coupon_visuals_are_transcript_grounded():
         "editorial_coupon",
     ]
     assert all(event["grounded_in_text"] for event in events)
+    assert events[0]["visual_verb"] == "compare"
+    assert events[1]["visual_verb"] == "reveal"
     assert events[0]["offer_values"] == ["100", "10元"]
     assert events[1]["coupon_count"] == 6
 
@@ -79,7 +85,7 @@ def test_generic_claim_does_not_become_offer_compare():
         duration_seconds=10,
         max_events=5,
     )
-    assert events[0]["style_id"] == "editorial_positive"
+    assert events == []
 
 
 def test_sticker_never_outlives_its_source_segment():

@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import copy
 import os
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 
 PRESET_PURE_ADAPTIVE = "talking-head-pure-adaptive-v1"
 PRESET_BRAND_EMPHASIS = "talking-head-brand-emphasis-v1"
+PRESET_SEMANTIC_ADAPTIVE = "talking-head-semantic-adaptive-v1"
 PRESET_LOCAL_GRAMMAR_V2 = "talking-head-local-grammar-v2"
 PRESET_GRAMMAR_ONLY = "talking-head-grammar-only-v1"
 JY_ROUGH_CUT_SUBTITLE_PRESET = "JY_ROUGH_CUT_SUBTITLE_PRESET"
@@ -33,7 +35,13 @@ DEFAULT_PRESET_ID = PRESET_PURE_ADAPTIVE
 LEGACY_STYLE_ID_ALIAS = "adaptive_talking_head_v1"
 
 _VALID_PRESET_IDS = frozenset(
-    {PRESET_PURE_ADAPTIVE, PRESET_BRAND_EMPHASIS, PRESET_LOCAL_GRAMMAR_V2, PRESET_GRAMMAR_ONLY}
+    {
+        PRESET_PURE_ADAPTIVE,
+        PRESET_BRAND_EMPHASIS,
+        PRESET_SEMANTIC_ADAPTIVE,
+        PRESET_LOCAL_GRAMMAR_V2,
+        PRESET_GRAMMAR_ONLY,
+    }
 )
 
 
@@ -123,6 +131,48 @@ def _brand_emphasis() -> dict[str, Any]:
             "warm_pink": "#ED3A7C",
         },
     }
+
+
+def _semantic_adaptive() -> dict[str, Any]:
+    """Generic semantic editing preset for new customer exports.
+
+    Keep the proven visual language from the reference preset, but make the
+    intent explicit: downstream planning must derive visuals from the current
+    transcript and available assets, never from a sample-video topic.
+    """
+
+    preset = _brand_emphasis()
+    preset.update(
+        {
+            "preset_id": PRESET_SEMANTIC_ADAPTIVE,
+            "display_name": "语义自适应精剪",
+            "source": "semantic_visual_director",
+            # The semantic release path is the current customer-facing style.
+            # Keep the legacy brand preset compatible, but do not let its
+            # small, shadowed caption skin leak into new adaptive exports.
+            "caption": {
+                "max_lines": 1,
+                "max_chars_per_line": 11,
+                "font_size": 72,
+                "safe_bottom": 250,
+                "font_style": "bold",
+                "outline_width": 3,
+                "shadow": 0,
+                "color": "#FFFFFF",
+                "emphasis_color": "#FFD166",
+            },
+            "visual_director": {
+                "enabled": True,
+                "derive_from_transcript": True,
+                "require_grounded_subject": True,
+                "allow_fullscreen_broll": True,
+                "allow_pip": True,
+                "allow_generated_image_gap_fill": True,
+                "fallback": "image_parallax_or_safe_camera",
+            },
+        }
+    )
+    return preset
 
 
 def _local_grammar_v2() -> dict[str, Any]:
@@ -318,6 +368,7 @@ def _grammar_only() -> dict[str, Any]:
 _BUILTIN_PRESETS: dict[str, dict[str, Any]] = {
     PRESET_PURE_ADAPTIVE: _pure_adaptive(),
     PRESET_BRAND_EMPHASIS: _brand_emphasis(),
+    PRESET_SEMANTIC_ADAPTIVE: _semantic_adaptive(),
     PRESET_LOCAL_GRAMMAR_V2: _local_grammar_v2(),
     PRESET_GRAMMAR_ONLY: _grammar_only(),
 }

@@ -1215,10 +1215,10 @@ def test_ass_backfills_kinetic_motion_for_legacy_cached_preview_cues():
     ]
 
     assert len(caption_dialogues) == len(segments)
-    assert r"\t(" in caption_dialogues[0]
-    assert all(r"\t(" in line for line in caption_dialogues)
+    assert r"\fad(120,0)" in caption_dialogues[0]
+    assert all(r"\fad(120,0)" in line for line in caption_dialogues)
     assert all(r"\fad(" in line for line in caption_dialogues)
-    assert all(r"\fscx90\fscy90" in line for line in caption_dialogues[1:])
+    assert all(r"\fscx90\fscy90" not in line for line in caption_dialogues)
 
 
 def test_ass_rebuilds_stale_v3_kinetic_spans_before_export():

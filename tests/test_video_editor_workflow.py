@@ -2,36 +2,39 @@
 
 from __future__ import annotations
 
-import json
-import io
 import hashlib
+import io
+import json
 import re
 import shutil
 import subprocess
 from datetime import datetime
+from itertools import pairwise
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+import src.services.style_presets as style_presets_module
+import src.services.video_editor_cloud as cloud_module
+import src.services.video_editor_workflow as workflow_module
 from src.models import (
     AvatarProviderStatus,
     AvatarTask,
     TaskStatus,
-    VideoEditTask,
     VideoEditorBatch,
     VideoEditorBatchItem,
+    VideoEditTask,
 )
 from src.repositories.mock import MockRepository
 from src.repositories.sqlite import SQLiteRepository
 from src.resources import asr_model_status
+from src.services.grammar_only import validate_grammar_only_timeline
+from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
 from src.services.video_editor_workflow import (
     VideoEditorWorkflowError,
     VideoEditorWorkflowService,
 )
-import src.services.video_editor_workflow as workflow_module
-import src.services.style_presets as style_presets_module
-import src.services.video_editor_cloud as cloud_module
 
 
 def test_visual_gate_policy_is_template_adaptive() -> None:
@@ -51,6 +54,24 @@ def test_visual_gate_policy_is_template_adaptive() -> None:
     assert story["max_coverage_ratio"] == pytest.approx(0.18)
     assert tutorial["pip_required"] is False
     assert story["pip_required"] is False
+
+
+def test_grammar_only_rebuild_does_not_reuse_legacy_cached_symbols() -> None:
+    rebuilt = workflow_module._rebuild_grammar_only_timeline(
+        [{"start": 0.0, "end": 2.5, "text": "这个方法能提高客户转化率"}],
+        duration_seconds=2.5,
+        cached_timeline={
+            "events": [{"type": "semantic_symbol", "symbol": "psychology"}],
+            "sticker_events": [{"type": "semantic_symbol", "symbol": "sentiment_satisfied"}],
+        },
+    )
+
+    assert validate_grammar_only_timeline(rebuilt) == []
+    assert all(
+        event.get("symbol") not in {"psychology", "sentiment_satisfied"}
+        for event in rebuilt["events"]
+        if isinstance(event, dict)
+    )
 
 
 def test_local_grammar_v2_is_a_roll_first_and_does_not_require_broll() -> None:
@@ -88,9 +109,35 @@ def test_grammar_symbols_stay_out_of_the_upper_right_corner() -> None:
         source_height=1280,
     )
 
-    assert "x='W-w-42'" in rendered
-    assert "trunc(H*0.60-h/2)" in rendered
+    assert "x='trunc((W-w)/2)'" in rendered
+    assert "trunc(H*0.70-h/2)" in rendered
     assert "trunc(H*0.12-h/2)" not in rendered
+
+
+def test_editorial_visual_verbs_use_the_clean_linework_geometry() -> None:
+    rendered = workflow_module.VideoEditorWorkflowService._local_rhythm_video_filter(
+        duration_seconds=12.0,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="",
+        motion_items=[
+            {
+                "start": 2.0,
+                "end": 3.0,
+                "style_id": "editorial_offer_compare",
+                "visual_verb": "compare",
+            }
+        ],
+        source_width=720,
+        source_height=1280,
+    )
+
+    assert "trunc((W-w)/2)" in rendered
+    assert "trunc(H*0.70-h/2)" in rendered
+    assert "trunc(H*0.36-h/2)" not in rendered
+    assert "trunc(331*(1.0+0.04*if(lt(t,0.18),1-t/0.18,0))/2)*2" in rendered
 
 
 def test_grammar_negative_mark_is_not_duplicated_by_editorial_sticker() -> None:
@@ -186,6 +233,21 @@ def test_rich_adaptive_policy_requires_real_pip_and_full_visuals() -> None:
     assert policy["full_required"] is True
     assert policy["min_pip_events"] == 1
     assert policy["min_full_events"] == 1
+
+
+def test_rich_adaptive_policy_scales_short_form_without_unrelated_broll() -> None:
+    policy = workflow_module._visual_gate_policy_for_template(
+        "adaptive_talking_head_v1",
+        visual_density="rich",
+        duration_seconds=33.23,
+    )
+
+    assert policy["min_real_events"] == 2
+    assert policy["min_coverage_ratio"] == pytest.approx(0.20)
+    assert policy["max_coverage_ratio"] == pytest.approx(0.55)
+    assert policy["min_effective_coverage_ratio"] == pytest.approx(0.20)
+    assert policy["pip_required"] is True
+    assert policy["full_required"] is True
 
 
 def test_adaptive_pipeline_marker_cannot_fall_back_to_legacy_export(
@@ -824,7 +886,7 @@ def test_sparse_sfx_selector_covers_the_timeline_without_duplicate_segments():
     starts = [float(item["start"]) for item in selected]
     assert starts[0] == pytest.approx(1.0)
     assert starts[-1] >= 42.0
-    assert all(right - left >= 2.8 for left, right in zip(starts, starts[1:]))
+    assert all(right - left >= 2.8 for left, right in pairwise(starts))
     assert len(
         [item.get("source_segment_index") for item in selected]
     ) == len({item.get("source_segment_index") for item in selected})
@@ -1044,7 +1106,9 @@ def test_sentence_level_local_export_keeps_subtitle_gate_with_or_without_pip(
     assert quality["subtitle_timeline"]["experience_gate"]["passed"] is True
     assert quality["subtitle_timeline"]["phrase_cue_count"] >= 2
     assert quality["subtitle_timeline"]["phrase_cue_count"] <= 18
-    assert quality["subtitle_word_gate_passed"] is with_words
+    # Character-token clocks are preview-usable but remain unverified for
+    # publish precision, even when every character has a timestamp.
+    assert quality["subtitle_word_gate_passed"] is False
     # Preview/word timing is separate from publish rights and visual gates.
     assert quality["publish_claim_allowed"] is False
     if with_broll:
@@ -1054,8 +1118,6 @@ def test_sentence_level_local_export_keeps_subtitle_gate_with_or_without_pip(
 
 
 def test_subtitle_word_timing_report_verifies_real_word_boundaries():
-    from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
-
     segment = {
         "start": 0.0,
         "end": 2.0,
@@ -1089,8 +1151,6 @@ def test_subtitle_word_timing_report_verifies_real_word_boundaries():
 
 
 def test_subtitle_word_timing_report_keeps_sentence_only_as_unverified():
-    from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
-
     segment = {
         "start": 0.0,
         "end": 2.0,
@@ -1112,6 +1172,30 @@ def test_subtitle_word_timing_report_keeps_sentence_only_as_unverified():
         "word_p95_le_150ms": None,
         "mapping_le_1_frame": None,
     }
+
+
+def test_character_token_timing_is_preview_only_and_cannot_pass_publish_gate():
+    segment = {
+        "start": 0.0,
+        "end": 1.2,
+        "text": "测试字幕",
+        "words": [
+            {"start": index * 0.3, "end": (index + 1) * 0.3, "text": char}
+            for index, char in enumerate("测试字幕")
+        ],
+    }
+    preview = build_business_talking_head_overlay_preview(
+        [segment], title="", output_profile="720p"
+    )
+
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], preview, fps=30.0
+    )
+
+    assert report["status"] == "estimated_character_token_timestamps"
+    assert report["verified"] is False
+    assert report["timing_gate_passed"] is False
+    assert report["structural_timing_available"] is True
 
 
 def test_short_reviewed_phrase_uses_exact_word_clock_with_explicit_dwell_exception():
@@ -1189,6 +1273,74 @@ def test_long_raw_word_pause_does_not_reinflate_readable_phrase_clock():
     assert cue["word_clock_mapping"] == "lexical_preview_clock_preserved_over_pause"
 
 
+def test_indivisible_long_word_keeps_real_end_clock_instead_of_truncating():
+    segment = {
+        "start": 0.0,
+        "end": 4.0,
+        "text": "认准国标GB184832001",
+        "words": [
+            {"start": 0.0, "end": 0.72, "text": "认准"},
+            {"start": 0.72, "end": 1.3, "text": "国标"},
+            {"start": 1.3, "end": 4.0, "text": "GB184832001"},
+        ],
+    }
+
+    preview = build_business_talking_head_overlay_preview(
+        [segment], title="", output_profile="720p"
+    )
+    code_cue = next(
+        cue for cue in preview["cues"] if "GB184832001" in cue["lines"][0]
+    )
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], preview, fps=30.0
+    )
+    experience = VideoEditorWorkflowService._subtitle_experience_gate(
+        [segment], preview
+    )
+
+    assert code_cue["end"] == pytest.approx(4.0)
+    assert code_cue["lexical_boundary_exception"] == "compound_phrase"
+    assert report["word_p95_ms"] == 0.0
+    assert report["mapping_error_frames"] == 0.0
+    assert experience["passed"] is True
+
+
+def test_reviewed_clock_uses_numeric_suffix_projection_for_split_provider_tokens():
+    segment = {
+        "start": 0.0,
+        "end": 1.2,
+        "text": "吸力衰减8",
+        "words": [
+            {"start": 0.0, "end": 0.4, "text": "吸力"},
+            {"start": 0.4, "end": 0.9, "text": "衰减"},
+            {"start": 0.9, "end": 1.0, "text": "8"},
+            {"start": 1.0, "end": 1.2, "text": "%"},
+        ],
+    }
+    preview = {
+        "phrase_timing_source": "word_timestamps",
+        "cues": [
+            {
+                "source_segment_index": 0,
+                "start": 0.0,
+                "end": 1.2,
+                "lines": ["吸力衰减8"],
+            }
+        ],
+    }
+
+    snapped = VideoEditorWorkflowService._snap_preview_cues_to_reviewed_word_clock(
+        [segment], preview
+    )
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], snapped, fps=30.0
+    )
+
+    assert snapped["cues"][0]["end"] == pytest.approx(1.2)
+    assert report["word_p95_ms"] == 0.0
+    assert report["mapping_error_frames"] == 0.0
+
+
 def test_production_export_builds_current_single_line_clean_caption_contract(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1219,6 +1371,15 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
             "orientation": "vertical",
             "has_audio": True,
             "size_bytes": 5,
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "_detect_source_burned_captions",
+        lambda *_args, **_kwargs: {
+            "detected": True,
+            "mode": "replace_baked_source",
+            "confidence": 0.99,
         },
     )
 
@@ -1261,12 +1422,23 @@ def test_production_export_builds_current_single_line_clean_caption_contract(
     )
     assert task.outputs["workflow"] == "local_preview_export"
     assert task.outputs["requested_pipeline"] == "adaptive_fine_cut_v1"
-    assert json.loads(task.outputs["shot_plan_json"])["visual_density"] == "local_grammar_v2"
+    assert json.loads(task.outputs["shot_plan_json"])["visual_density"] == "rich"
     assert task.outputs["publish_title"] == "餐饮门店同城获客"
     assert json.loads(task.outputs["subtitle_segments_json"])[0]["start"] == 0.8
     batch = repo.list_video_editor_batches(limit=1)[0]
-    assert batch.items[0].edit_plan["style_preset_id"] == "talking-head-local-grammar-v2"
-    assert batch.items[0].provider_payload["style_preset_id"] == "talking-head-local-grammar-v2"
+    assert batch.items[0].edit_plan["style_preset_id"] == "talking-head-semantic-adaptive-v1"
+    assert batch.items[0].edit_plan.get("sparse_asset_mode") is None
+    assert batch.items[0].edit_plan["unique_output_per_task"] is True
+    assert batch.items[0].edit_plan["preserve_release_title"] is True
+    assert batch.items[0].edit_plan["source_caption_mode"] == "generated_ass"
+    assert batch.items[0].edit_plan["source_caption_mode_locked"] is True
+    assert batch.items[0].edit_plan["source_caption_detection"]["detected"] is True
+    assert batch.items[0].provider_payload["source_caption_mode_locked"] is True
+    director_plan = batch.items[0].edit_plan["director_plan"]
+    assert director_plan["semantic_director"]["provider"] == "local_rules"
+    assert director_plan["semantic_annotations"]
+    assert batch.items[0].provider_payload["style_preset_id"] == "talking-head-semantic-adaptive-v1"
+    assert batch.items[0].provider_payload.get("sparse_asset_mode") is None
     assert batch.items[0].review_snapshot["source"] == "approved_avatar_asr"
     preview = service._batch_payload(batch)["items"][0]["overlay_preview"]
     assert preview is not None
@@ -2285,7 +2457,7 @@ def test_release_long_form_cached_visuals_are_temporally_spread(
     assert selected_starts[-1] >= 90.0
     assert all(
         right - left >= 7.5
-        for left, right in zip(selected_starts, selected_starts[1:])
+        for left, right in pairwise(selected_starts)
     )
 
 
@@ -2457,6 +2629,50 @@ def test_visual_request_uses_generic_vehicle_scene_queries_without_product_dashb
         "used car buyer checking vehicle",
         "second hand car dealership",
     ]
+
+
+def test_semantic_annotation_without_concrete_subject_stays_on_a_roll():
+    request = workflow_module._build_visual_request(
+        {"source_start": 0.0, "source_end": 3.0},
+        [{"start": 0.0, "end": 3.0, "text": "客户关系会跟着断掉"}],
+        semantic_annotations=[
+            {
+                "source_segment_index": 0,
+                "semantic_text": "跟着断掉",
+                "semantic_roles": ["LOW_INFORMATION"],
+                "concrete_visual_subject": None,
+            }
+        ],
+    )
+
+    assert request["visual_type"] == "abstract"
+    assert request["search_queries"] == []
+    assert request["fallback"] == "caption_camera_only"
+
+
+def test_recent_broll_usage_is_read_from_audit_logs(tmp_path: Path):
+    output_directory = tmp_path / "video_edits"
+    output_directory.mkdir()
+    (output_directory / "edit-old.provider_search_log.json").write_text(
+        json.dumps(
+            [
+                {"final_asset_id": "broll-old"},
+                {"final_asset_id": "broll-new"},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(output_directory),
+        _TranscriptionStub(),
+        None,
+    )
+
+    assert service._recently_used_broll_asset_ids() == {
+        "broll-old",
+        "broll-new",
+    }
 
 
 def test_default_local_filter_has_no_broll_overlay(tmp_path: Path):
@@ -2690,6 +2906,39 @@ def test_release_filter_renders_semantic_motion_badges_before_subtitles(
     assert rendered.index("[with_motion1]") < rendered.index("subtitles='approved.ass'")
 
 
+def test_release_filter_skips_caption_only_keyword_artwork(
+    tmp_path: Path,
+):
+    service = VideoEditorWorkflowService(
+        MockRepository(tasks=[]),
+        _VideoEditingStub(tmp_path / "edits"),
+        _TranscriptionStub(),
+        None,
+    )
+    rendered = service._local_rhythm_video_filter(
+        duration_seconds=8,
+        width=720,
+        height=1280,
+        fps=30,
+        playback_rate=1.0,
+        subtitle_filter="approved.ass",
+        motion_items=[
+            {
+                "start": 1.0,
+                "end": 2.8,
+                "style_id": "keyword_pop",
+                "semantic_kind": "keyword",
+                "render_policy": "caption_only",
+                "input_index": 2,
+            }
+        ],
+        motion_input_index=2,
+    )
+
+    assert "with_motion" not in rendered
+    assert "subtitles='approved.ass'" in rendered
+
+
 def test_release_filter_renders_semantic_info_band_after_broll_before_subtitles(
     tmp_path: Path,
 ):
@@ -2900,6 +3149,16 @@ def test_grammar_hook_title_is_short_complete_and_transcript_grounded():
     assert "…" not in hook
 
 
+def test_grammar_hook_title_prefers_complete_topic_phrase_over_sentence_tail():
+    hook = VideoEditorWorkflowService._grammar_hook_title(
+        "本地上传 · 陌生视频.mp4",
+        "油烟净化器选型看风量，别只看价格。",
+    )
+
+    assert hook == "油烟净化器选型"
+    assert "看风量" not in hook
+
+
 def test_sparse_pip_geometry_alternates_safe_sides():
     right = workflow_module._sparse_pip_geometry(720, 1280, variant=0)
     left = workflow_module._sparse_pip_geometry(720, 1280, variant=1)
@@ -2912,6 +3171,20 @@ def test_sparse_pip_geometry_alternates_safe_sides():
     assert left["bbox"]["left"] / 720 < 0.02
     assert right["bbox"]["right"] / 720 > 0.98
     assert left["bbox"]["top"] / 1280 == pytest.approx(0.49, abs=0.01)
+
+
+def test_adaptive_pip_geometry_is_larger_and_stays_out_of_safe_bands():
+    right = workflow_module._adaptive_pip_geometry(720, 1280, variant=0)
+    left = workflow_module._adaptive_pip_geometry(720, 1280, variant=1)
+
+    assert right["safe"] and left["safe"]
+    assert right["bbox"]["width"] / 720 == pytest.approx(0.32, abs=0.01)
+    assert right["bbox"]["height"] / 1280 == pytest.approx(0.17, abs=0.01)
+    assert right["bbox"]["left"] > left["bbox"]["left"]
+    assert not right["intersects_face_safe_bbox"]
+    assert not right["intersects_subtitle_bbox"]
+    assert not left["intersects_face_safe_bbox"]
+    assert not left["intersects_subtitle_bbox"]
 
 
 def test_caption_emphasis_preserves_a_late_semantic_payoff():
@@ -2934,6 +3207,8 @@ def test_caption_emphasis_preserves_a_late_semantic_payoff():
     emphasized = [cue for cue in cues if cue.get("emphasis_range")]
     assert len(emphasized) <= 17
     assert emphasized[-1]["semantic_role"] == "CTA"
+    assert all(cue["entry_motion"]["type"] == "fade_in" for cue in cues)
+    assert all(cue["entry_motion"]["duration_ms"] == 120 for cue in cues)
 
 
 def test_authorized_bgm_is_added_to_batch_render(
@@ -3523,6 +3798,14 @@ def test_adaptive_visual_card_is_not_enabled_on_the_default_render_path(monkeypa
     assert workflow_module._adaptive_visual_card_opted_in() is True
 
 
+def test_legacy_decorative_vector_icons_are_not_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("VIDEO_EDITOR_ENABLE_DECORATIVE_VECTOR_ICONS", raising=False)
+    assert workflow_module._decorative_vector_icons_opted_in() is False
+
+    monkeypatch.setenv("VIDEO_EDITOR_ENABLE_DECORATIVE_VECTOR_ICONS", "yes")
+    assert workflow_module._decorative_vector_icons_opted_in() is True
+
+
 def test_reviewed_word_clock_uses_following_word_after_an_audio_pause():
     source_segments = [
         {
@@ -3647,8 +3930,6 @@ def test_lexical_clock_handles_mixed_token_granularity_without_splitting_compoun
 
 
 def test_long_character_token_segment_uses_lexical_word_clock_partition():
-    from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
-
     text = "这是一个用于验证长段词序时钟的通用教程内容没有特殊答案并且保持完整顺序"
     segment = {"start": 0.0, "end": len(text) * 0.3, "text": text, "words": []}
     for index, character in enumerate(text):
@@ -3899,6 +4180,64 @@ def test_subtitle_style_baseline_gate_passes_on_baseline_compliant_preview():
     assert result["failures"] == []
 
 
+def test_semantic_motion_events_are_projected_into_caption_emphasis():
+    events = [
+        {
+            "type": "semantic_motion_badge",
+            "semantic_kind": "keyword",
+            "semantic_text": "业务员",
+            "source_segment_index": 0,
+            "source_text": "业务员他一旦离职",
+            "grounded_in_text": True,
+        },
+        {
+            "type": "semantic_motion_badge",
+            "semantic_kind": "result",
+            "semantic_text": "断掉",
+            "source_segment_index": 1,
+            "source_text": "客户的关系也就跟着断掉了",
+            "grounded_in_text": True,
+        },
+    ]
+
+    emphasis = workflow_module._caption_emphasis_items_from_motion_events(events)
+
+    assert [item["term"] for item in emphasis] == ["业务员", "断掉"]
+    assert [item["kind"] for item in emphasis] == ["keyword", "result"]
+
+
+def test_repeated_opening_title_is_not_rendered_as_second_caption():
+    segments = [{"start": 0.0, "end": 1.0, "text": "业务员他一旦离职"}]
+
+    assert workflow_module.VideoEditorWorkflowService._title_repeats_opening_caption(
+        "业务员他一旦离职",
+        segments,
+    )
+    assert not workflow_module.VideoEditorWorkflowService._title_repeats_opening_caption(
+        "客户资源不能跟着个人流失",
+        segments,
+    )
+
+
+def test_subtitle_style_gate_rejects_missing_semantic_emphasis_when_required():
+    preview = {
+        "subtitle_style_id": "adaptive_talking_head_v1",
+        "style_fingerprint": {
+            "entry_motion": "fade_in_120ms",
+            "emphasis_scale_range": [1.05, 1.10],
+        },
+        "cues": [{"emphasis_style": None}],
+    }
+
+    result = workflow_module._subtitle_style_baseline_gate(
+        preview,
+        require_emphasis=True,
+    )
+
+    assert result["passed"] is False
+    assert "semantic_emphasis_missing" in result["failures"]
+
+
 def test_subtitle_style_baseline_gate_accepts_current_white_base_renderer():
     preview = {
         "subtitle_style_id": "adaptive_white_base",
@@ -4062,13 +4401,13 @@ def test_cost_confirmation_required_gate_blocks_unconfirmed_generation():
 def test_local_export_quality_report_aggregates_relevance_and_cost_gates():
     """The two new gates must block the report when a low-score candidate
     slips in or when generated assets were not confirmed by the user."""
-    base_kwargs = dict(
-        expected_width=720,
-        expected_height=1280,
-        expected_duration=10,
-        source_has_audio=True,
-        visual_beats=[{"start": 1, "end": 2}],
-        source_media_identity={
+    base_kwargs = {
+        "expected_width": 720,
+        "expected_height": 1280,
+        "expected_duration": 10,
+        "source_has_audio": True,
+        "visual_beats": [{"start": 1, "end": 2}],
+        "source_media_identity": {
             "provider": "aliyun",
             "model": "fun-asr",
             "media_sha256": "a" * 64,
@@ -4076,7 +4415,7 @@ def test_local_export_quality_report_aggregates_relevance_and_cost_gates():
             "transcript_timing_source": "sentence_timestamps",
             "word_timestamps_available": False,
         },
-        subtitle_preview={
+        "subtitle_preview": {
             "subtitle_style_id": "adaptive_talking_head_v1",
             "style_fingerprint": {
                 "entry_motion": "fade_in_120ms",
@@ -4084,7 +4423,7 @@ def test_local_export_quality_report_aggregates_relevance_and_cost_gates():
             },
             "cues": [],
         },
-    )
+    }
     output_media = {
         "size_bytes": 100, "width": 720, "height": 1280,
         "duration_seconds": 10.1, "has_audio": True,

@@ -19,6 +19,7 @@ from project.backend.app.core.deps import (
     get_repository,
     get_template_service,
 )
+from project.backend.app.core.security import require_admin_token
 from project.backend.app.schemas.requests import PipelineCreateRequest
 from project.backend.app.schemas.responses import PipelineResponse
 from src.adapters.douyin_parser import DouyinParserError
@@ -114,7 +115,11 @@ def _to_response(run) -> PipelineResponse:
         created_at=run.created_at,
         updated_at=run.updated_at,
         finished_at=run.finished_at,
-        result_media_url=(f"/api/v1/pipelines/{run.run_id}/media" if run.edit_task_id else None),
+        result_media_url=(
+            f"/api/v1/pipelines/{run.run_id}/media?v={run.edit_task_id}"
+            if run.edit_task_id
+            else None
+        ),
     )
 
 
@@ -453,7 +458,13 @@ def get_pipeline_media(
     path = Path(str(getattr(task, "result_path", "") or ""))
     if not path.is_file():
         raise HTTPException(status_code=404, detail="数字人口播成片尚未生成。")
-    return FileResponse(path, media_type="video/mp4", filename=path.name)
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=path.name,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-cache"},
+    )
 
 
 @router.delete("/{run_id}")
@@ -468,9 +479,18 @@ def delete_pipeline(
 
 @router.delete("")
 def delete_all_pipelines(
+    _admin: str = Depends(require_admin_token),
     repo=Depends(get_repository),
+    confirmation: str | None = Header(default=None, alias="X-Confirm-Reset"),
 ):
-    """删除全部流水线记录；不会删除候选、素材或数字人成片。"""
+    """Hard reset every pipeline record.  Requires admin role + the
+    X-Confirm-Reset header so a stray script with an X-API-Key can never
+    mass-delete a customer's work."""
+    if confirmation != "yes-reset-all-pipelines":
+        raise HTTPException(
+            status_code=400,
+            detail="需要 X-Confirm-Reset: yes-reset-all-pipelines 头才允许全量重置。",
+        )
     return {"deleted_count": repo.delete_all_pipeline_runs()}
 
 

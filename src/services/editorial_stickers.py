@@ -17,11 +17,20 @@ from typing import Any
 _ROLE_RULES: tuple[tuple[str, frozenset[str], str, str], ...] = (
     ("offer_compare", frozenset({"PRICE", "NUMBER", "PERCENT", "KEY_CLAIM"}), "同一句包含可识别的优惠/奖励对照语义", "pop_soft"),
     ("coupon", frozenset({"NUMBER", "PRODUCT", "PROCESS", "STEP", "KEY_CLAIM"}), "明确提到优惠券或券的数量/领取语义", "pop_soft"),
-    ("negative", frozenset({"NEGATIVE", "WARNING"}), "明确的否定或风险语义", "warning_tick"),
-    ("positive", frozenset({"POSITIVE", "CONCLUSION"}), "明确的正向结果或结论语义", "success_ping"),
-    ("number", frozenset({"NUMBER", "PRICE", "PERCENT"}), "数字、价格或比例语义", "pop_soft"),
-    ("process", frozenset({"PROCESS", "STEP", "PRODUCT", "SCENE", "LOCATION", "EXAMPLE"}), "具体对象、步骤或场景语义", "pop_soft"),
-    ("cta", frozenset({"CTA"}), "明确的行动号召语义", "success_ping"),
+)
+
+_VISUAL_VERB_BY_STICKER_KIND = {
+    "offer_compare": "compare",
+    "coupon": "reveal",
+    "cta": "resolve",
+    "negative": "warning",
+}
+
+# These are visual verbs, not user-facing sticker names.  A verb describes a
+# small piece of editorial punctuation that can be reused across domains while
+# keeping the spoken caption as the only source of wording.
+EDITORIAL_VISUAL_VERBS = frozenset(
+    {"reveal", "compare", "accumulate", "flow", "impact", "resolve", "warning"}
 )
 
 
@@ -220,7 +229,7 @@ def build_editorial_sticker_events(
             if kind in used_kinds:
                 continue
             event_start = _word_start(segment, term, start)
-            if event_start < start or event_start - last_start < 8.0:
+            if event_start < start or event_start - last_start < 3.0:
                 continue
             # Keep every sticker inside the transcript segment that gave it
             # meaning.  The renderer retimes source-clock events by the
@@ -253,6 +262,10 @@ def build_editorial_sticker_events(
                     "license": "project-owned-local-vector",
                     "third_party_cost": 0,
                     "animation": "slide_pop_rotate_fade",
+                    "visual_verb": _VISUAL_VERB_BY_STICKER_KIND.get(kind, "reveal"),
+                    "visual_language": "editorial_line_v1",
+                    "visual_action": "caption_attached_punctuation",
+                    "visual_variant": len(events) % 2,
                     "side": "left" if len(events) % 2 == 0 else "right",
                     "safe_area": "lower_caption_safe_band" if kind == "cta" else "side_shelf",
                 }
@@ -362,4 +375,140 @@ def render_editorial_sticker(event: Mapping[str, Any], output_path: Path) -> Non
         draw.line((204, 99, 204, 138), fill=yellow, width=6)
     else:
         draw.arc((70, 60, 230, 180), 190, 350, fill=yellow, width=7)
+    canvas.save(output_path)
+
+
+def render_editorial_visual_verb(
+    event: Mapping[str, Any], output_path: Path
+) -> None:
+    """Render a restrained, caption-attached visual verb.
+
+    This intentionally contains no text, card, badge, speech bubble, emoji, or
+    circular enclosure.  The caption remains the information carrier; this
+    layer only supplies a short visual gesture that a renderer can animate with
+    its existing fade/scale envelope.
+    """
+
+    from PIL import Image, ImageDraw
+
+    width, height = 640, 180
+    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    verb = str(event.get("visual_verb") or "").strip().lower()
+    if verb not in EDITORIAL_VISUAL_VERBS:
+        raise ValueError(f"不支持的编辑型视觉动作: {verb or 'empty'}")
+
+    # Warm editorial accents are deliberately less saturated than the retired
+    # yellow/red badge set.  Alpha is kept low so the line becomes punctuation
+    # over the video instead of a foreground object.
+    ink = (245, 238, 215, 226)
+    warm = (241, 190, 88, 232)
+    coral = (220, 112, 94, 224)
+    blue = (143, 183, 214, 218)
+    green = (117, 183, 151, 224)
+    faint = (245, 238, 215, 120)
+    baseline_y = 96
+    variant = int(event.get("visual_variant") or 0) % 2
+
+    if verb == "impact":
+        # Two editorial variants: a loose underline, or a short pair of
+        # chevrons. Both land on the caption without enclosing it in a badge.
+        if not variant:
+            draw.line((140, baseline_y, 500, baseline_y - 8), fill=warm, width=6)
+            draw.line((188, baseline_y + 13, 452, baseline_y + 7), fill=ink, width=3)
+            draw.line((122, 66, 94, 48), fill=warm, width=4)
+            draw.line((518, 52, 546, 36), fill=warm, width=4)
+        else:
+            draw.line((164, 110, 294, 100), fill=warm, width=5)
+            draw.line((346, 100, 476, 90), fill=warm, width=5)
+            draw.line((284, 88, 304, 102, 284, 116), fill=ink, width=4)
+            draw.line((356, 78, 336, 92, 356, 106), fill=ink, width=4)
+    elif verb == "compare":
+        # A compare mark can be a pair of rails or a red-cross/green-check
+        # composition. Neither variant uses two rounded cards.
+        if not variant:
+            draw.line((104, 62, 302, 62), fill=coral, width=5)
+            draw.line((338, 116, 536, 116), fill=green, width=5)
+            draw.line((298, 44, 340, 134), fill=ink, width=4)
+            draw.line((128, 78, 260, 78), fill=faint, width=3)
+            draw.line((380, 100, 512, 100), fill=faint, width=3)
+        else:
+            draw.line((118, 58, 274, 74), fill=coral, width=6)
+            draw.line((366, 112, 520, 96), fill=green, width=6)
+            draw.line((184, 42, 230, 94), fill=coral, width=5)
+            draw.line((230, 42, 184, 94), fill=coral, width=5)
+            draw.line((384, 106, 408, 126, 468, 62), fill=green, width=6)
+    elif verb == "accumulate":
+        # A metric can read as a restrained rise or as a connected sequence;
+        # the second option avoids making every number look like a chart.
+        if not variant:
+            base_x = 178
+            for index, bar_height in enumerate((28, 46, 68, 88)):
+                x = base_x + index * 72
+                draw.line((x, baseline_y + 32, x, baseline_y + 32 - bar_height), fill=blue, width=8)
+            draw.line((base_x - 24, baseline_y + 34, base_x + 252, baseline_y + 34), fill=ink, width=3)
+            draw.line((base_x + 244, baseline_y + 34, base_x + 224, baseline_y + 22), fill=warm, width=4)
+            draw.line((base_x + 244, baseline_y + 34, base_x + 224, baseline_y + 46), fill=warm, width=4)
+        else:
+            points = ((166, 118), (244, 92), (326, 104), (408, 64), (484, 76))
+            draw.line(points, fill=blue, width=6, joint="curve")
+            for index, (x, y) in enumerate(points):
+                draw.ellipse((x - 7, y - 7, x + 7, y + 7), fill=warm if index in {0, 4} else ink)
+            draw.line((144, 132, 508, 132), fill=faint, width=3)
+    elif verb == "flow":
+        # An open path is the default; a segmented route gives process cues a
+        # little more authored rhythm without becoming a flowchart.
+        if not variant:
+            draw.arc((136, 38, 470, 142), 198, 342, fill=blue, width=5)
+            draw.line((450, 72, 500, 96), fill=blue, width=5)
+            draw.line((500, 96, 452, 112), fill=blue, width=5)
+            for x, y in ((150, 105), (316, 48), (470, 92)):
+                draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=warm)
+        else:
+            draw.line((132, 112, 224, 72, 322, 112, 420, 62, 500, 86), fill=blue, width=5, joint="curve")
+            draw.line((472, 70, 504, 86, 474, 104), fill=warm, width=5)
+            for x, y in ((224, 72), (322, 112), (420, 62)):
+                draw.ellipse((x - 6, y - 6, x + 6, y + 6), fill=ink)
+    elif verb == "reveal":
+        # Reveal is an editorial sweep around the caption.  Do not use the
+        # old equal-height bars here: at the final 720x1280 scale they read as
+        # a tiny dashboard icon floating above the subtitle.
+        if not variant:
+            draw.line((154, 122, 286, 108), fill=warm, width=6)
+            draw.line((354, 102, 486, 88), fill=warm, width=6)
+            draw.line((286, 108, 306, 94), fill=ink, width=4)
+            draw.line((354, 102, 334, 116), fill=ink, width=4)
+            draw.line((196, 70, 252, 56), fill=faint, width=3)
+            draw.line((388, 54, 444, 42), fill=faint, width=3)
+        else:
+            draw.line((176, 54, 176, 126, 212, 126), fill=blue, width=5)
+            draw.line((464, 54, 464, 126, 428, 126), fill=blue, width=5)
+            draw.line((232, 110, 408, 74), fill=warm, width=6)
+            draw.line((380, 64, 412, 74, 390, 100), fill=ink, width=4)
+    elif verb == "resolve":
+        # A conclusion can resolve as an open check or as a check landing on a
+        # short baseline, never as a circular approval stamp.
+        if not variant:
+            draw.line((206, 96, 252, 132, 326, 48), fill=green, width=7)
+            draw.line((346, 108, 486, 108), fill=ink, width=4)
+            draw.line((468, 92, 504, 108, 468, 124), fill=warm, width=4)
+        else:
+            draw.line((214, 100, 258, 134, 350, 48), fill=green, width=8)
+            draw.line((226, 148, 434, 148), fill=faint, width=3)
+            for x, y in ((392, 66), (430, 82), (470, 60)):
+                draw.ellipse((x - 5, y - 5, x + 5, y + 5), fill=warm)
+    elif verb == "warning":
+        # Warning is a strike or a compact red X; both are clearer and quieter
+        # than a warning triangle with an exclamation mark.
+        if not variant:
+            draw.line((154, 112, 486, 64), fill=coral, width=7)
+            draw.line((190, 58, 264, 48), fill=faint, width=3)
+            draw.line((376, 130, 448, 120), fill=faint, width=3)
+        else:
+            draw.line((250, 48, 350, 132), fill=coral, width=7)
+            draw.line((350, 48, 250, 132), fill=coral, width=7)
+            draw.line((176, 142, 244, 132), fill=faint, width=3)
+            draw.line((368, 42, 440, 32), fill=faint, width=3)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output_path)

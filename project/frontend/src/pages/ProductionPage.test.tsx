@@ -90,6 +90,46 @@ describe("ProductionPage single-task queue", () => {
     expect(screen.getByText("全部任务")).toBeTruthy();
   });
 
+  it("shows a useful fallback when a failed task has no error message", async () => {
+    const failedBatch = batch("failed");
+    failedBatch.items = [{
+      ...failedBatch.items[0],
+      status: "failed",
+      current_stage: "video_editing",
+      error_message: null,
+      blocked_reasons: [],
+    }];
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [failedBatch] });
+
+    renderPage();
+
+    expect(await screen.findByText("未通过质量门禁，详情待补充")).toBeTruthy();
+  });
+
+  it("sorts candidate and production tasks together by time", async () => {
+    const newerProduction = {
+      ...batch(),
+      batch_id: "new-production-batch",
+      created_at: "2026-07-29T09:00:00+08:00",
+      items: [{ ...batch().items[0], run_id: "new-production-run", display_title: "更新的生产任务" }],
+    };
+    const olderCrawler = {
+      batch_id: "older-crawler-batch",
+      keyword: "旧搜索任务",
+      status: "succeeded",
+      created_at: "2026-07-28T09:00:00+08:00",
+      finished_at: "2026-07-28T09:05:00+08:00",
+      platform_runs: [{ status: "succeeded" }],
+    } as unknown as CrawlerBatchResponse;
+    vi.mocked(listProductionBatches).mockResolvedValue({ items: [newerProduction] });
+    vi.mocked(listCrawlerBatches).mockResolvedValue({ items: [olderCrawler], total: 1 });
+    renderPage();
+
+    const rows = await screen.findAllByRole("row");
+    expect(rows[1].textContent).toContain("更新的生产任务");
+    expect(rows[2].textContent).toContain("旧搜索任务");
+  });
+
   it("returns candidate tasks to the material selection page", async () => {
     const crawlerBatch = {
       batch_id: "crawler-batch-1",

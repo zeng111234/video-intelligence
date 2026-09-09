@@ -401,7 +401,8 @@ if any(
     for domain in ("minimax.cn", "minimaxi.com", "minimax.io")
 ):
     COPYWRITING_API_KEY: str = (
-        _secret("MINIMAX_TEXT_API_KEY")
+        _secret("MINIMAX_API_KEY")
+        or _secret("MINIMAX_TEXT_API_KEY")
         or _secret("MINIMAX_TOKEN_PLAN_KEY")
         or _secret("COPYWRITING_API_KEY")
         or _secret("OPENAI_API_KEY")

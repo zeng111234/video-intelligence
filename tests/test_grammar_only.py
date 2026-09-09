@@ -2,12 +2,25 @@ from src.services.grammar_only import (
     ALLOWED_CAMERA_ACTIONS,
     JY_CLONE_GRAMMAR_ONLY,
     SEMANTIC_ROLES,
+    annotate_transcript_segments,
     build_grammar_only_timeline,
     build_grammar_style_events,
-    annotate_transcript_segments,
     validate_grammar_only_timeline,
 )
 from src.services.style_presets import PRESET_GRAMMAR_ONLY, get_style_preset
+
+
+def test_topical_attention_is_not_misclassified_as_viewer_cta():
+    timeline = build_grammar_only_timeline(
+        [{"start": 0.0, "end": 2.5, "text": "提出强调无条件积极关注"}],
+        duration_seconds=2.5,
+    )
+    roles = {
+        role
+        for item in timeline["semantic_annotations"]
+        for role in item.get("semantic_roles") or []
+    }
+    assert "CTA" not in roles
 
 
 def _segments(texts):
@@ -47,6 +60,53 @@ def test_annotations_and_events_are_transcript_grounded_for_unfamiliar_topics():
     for item in timeline["events"]:
         if item.get("type") == "semantic_symbol":
             assert item.get("semantic_role") and item.get("reason")
+
+
+def test_cached_director_annotations_are_revalidated_against_current_reviewed_text():
+    timeline = build_grammar_only_timeline(
+        [{"start": 5.0, "end": 7.0, "text": "新的产品方案"}],
+        duration_seconds=8.0,
+        annotations=[{
+            "source_segment_index": 0,
+            "start": 0.0,
+            "end": 2.0,
+            "source_text": "旧的产品方案",
+            "text": "旧的产品方案",
+            "semantic_text": "旧的产品",
+            "semantic_roles": ["PRODUCT"],
+            "importance": 0.9,
+        }],
+    )
+
+    assert timeline["semantic_annotations"]
+    annotation = timeline["semantic_annotations"][0]
+    assert annotation["source_text"] == "新的产品方案"
+    assert annotation["semantic_text"] in annotation["source_text"]
+    assert annotation["start"] == 5.0
+    assert annotation["end"] == 7.0
+
+
+def test_minimax_style_annotations_without_local_keywords_still_compile_events():
+    timeline = build_grammar_only_timeline(
+        [{"start": 0.0, "end": 2.5, "text": "这套方法能明显提高客户转化率"}],
+        duration_seconds=2.5,
+        annotations=[{
+            "source_segment_index": 0,
+            "semantic_text": "提高客户转化率",
+            "semantic_roles": ["KEY_CLAIM"],
+            "importance": 0.92,
+            "emotion": "positive",
+        }],
+    )
+
+    assert timeline["semantic_annotations"][0]["provider"] == "minimax"
+    assert any(event["type"] == "keyword_emphasis" for event in timeline["events"])
+    assert any(event["type"] == "camera" for event in timeline["events"])
+    assert all(
+        event["semantic_text"] in event["source_text"]
+        for event in timeline["events"]
+        if event["type"] == "keyword_emphasis"
+    )
 
 
 def test_forbidden_external_visuals_fail_closed():
@@ -110,6 +170,46 @@ def test_strong_numeric_semantics_use_minimal_burst_lines_not_a_badge():
     assert symbols[0]["symbol"] == "burst_lines"
     assert symbols[0]["reason"]
     assert "sun" not in symbols[0]["style_id"]
+
+
+def test_warning_keyword_uses_complete_tail_after_reporting_marker():
+    events = build_grammar_style_events(
+        [{
+            "start": 20.0,
+            "end": 22.0,
+            "semantic_text": "别听销售说免维护",
+            "source_text": "别听销售说免维护",
+            "semantic_roles": ["NEGATIVE", "WARNING"],
+            # Preserve the provider-shaped bad range to prove the local
+            # style engine does not blindly trust it for lexical selection.
+            "keyword_candidates": ["销售说免", "说免维护"],
+            "importance": .9,
+        }]
+    )
+
+    keywords = [event for event in events if event["type"] == "keyword_emphasis"]
+    assert keywords
+    assert keywords[0]["semantic_text"] == "免维护"
+    assert all("销售说免" not in event["semantic_text"] for event in keywords)
+
+
+def test_long_semantic_text_emphasis_never_prefix_clips():
+    events = build_grammar_style_events(
+        [{
+            "start": 12.0,
+            "end": 16.0,
+            "semantic_text": "认准国标GB184832001",
+            "source_text": "认准国标GB184832001",
+            "semantic_roles": ["KEY_CLAIM", "PRODUCT"],
+            "keyword_candidates": ["认准国标", "国标"],
+            "importance": .9,
+        }]
+    )
+
+    text_events = [event for event in events if event["type"] == "text_emphasis"]
+    assert text_events
+    assert text_events[0]["text"] == "国标"
+    assert text_events[0]["text"] != "认准国标GB18"
 
 
 def test_offer_phrase_keeps_charge_and_reward_as_one_grounded_semantic_beat():

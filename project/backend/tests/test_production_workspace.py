@@ -33,6 +33,7 @@ def test_workspace_exposes_one_item_batch_actions_and_create_idempotency(
             body = {
                 "name": "单条工作台",
                 "profile_id": profile["profile_id"],
+                "style_preset_id": "talking-head-brand-emphasis-v1",
                 "items": [
                     {
                         "source_type": "script",
@@ -73,6 +74,9 @@ def test_workspace_exposes_one_item_batch_actions_and_create_idempotency(
     assert first.status_code == 201, first.text
     assert repeated.status_code == 201, repeated.text
     assert first.json()["batch_id"] == repeated.json()["batch_id"]
+    assert first.json()["execution_config"]["style_preset_id"] == (
+        "talking-head-brand-emphasis-v1"
+    )
     assert workspace.status_code == 200, workspace.text
     payload = workspace.json()
     assert payload["current_stage"] == "source"
@@ -83,6 +87,55 @@ def test_workspace_exposes_one_item_batch_actions_and_create_idempotency(
     assert paused_workspace.status_code == 200, paused_workspace.text
     assert paused_workspace.json()["next_action"] == "resume"
     assert paused_workspace.json()["allowed_actions"] == ["resume"]
+
+
+def test_batch_normalizes_long_display_title_without_rejecting_source(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    production_service = ProductionService(repository, tmp_path / "production")
+    app.dependency_overrides[backend_deps.get_production_service] = (
+        lambda: production_service
+    )
+    app.dependency_overrides[backend_deps.get_pipeline_service] = (
+        lambda: pipeline_service
+    )
+    try:
+        with TestClient(app) as client:
+            profile = client.post(
+                "/api/v1/production/profiles",
+                json={"name": "长标题兼容配方"},
+            ).json()
+            long_title = "教培老师" * 60
+            response = client.post(
+                "/api/v1/production/batches",
+                headers={"Idempotency-Key": "long-title-compat"},
+                json={
+                    "name": "长标题兼容",
+                    "profile_id": profile["profile_id"],
+                    "items": [
+                        {
+                            "source_type": "script",
+                            "source_value": "完整来源内容仍然保留在 source_value。",
+                            "display_title": long_title,
+                        }
+                    ],
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(
+            backend_deps.get_production_service,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_pipeline_service,
+            None,
+        )
+
+    assert response.status_code == 201, response.text
+    item = response.json()["items"][0]
+    assert len(item["display_title"]) <= 120
+    assert item["display_title"].endswith("…")
+    assert item["source_value"] == "完整来源内容仍然保留在 source_value。"
 
 
 def test_batch_accepts_all_400_candidates_from_four_full_platform_results(tmp_path):

@@ -3,6 +3,7 @@ from src.services.style_presets import (
     PRESET_GRAMMAR_ONLY,
     PRESET_LOCAL_GRAMMAR_V2,
     PRESET_PURE_ADAPTIVE,
+    PRESET_SEMANTIC_ADAPTIVE,
     get_style_preset,
 )
 from src.services.video_editor_cloud import (
@@ -27,6 +28,15 @@ def test_dynamic_preset_is_defensive_and_has_benchmark_controls():
 
 def test_unknown_preset_falls_back_to_pure_adaptive():
     assert get_style_preset("not-a-real-preset")["preset_id"] == PRESET_PURE_ADAPTIVE
+
+
+def test_semantic_adaptive_uses_current_large_clean_caption_skin():
+    preset = get_style_preset(PRESET_SEMANTIC_ADAPTIVE)
+    assert preset["caption"]["font_size"] == 72
+    assert preset["caption"]["safe_bottom"] == 250
+    assert preset["caption"]["outline_width"] == 3
+    assert preset["caption"]["shadow"] == 0
+    assert preset["caption"]["font_style"] == "bold"
 
 
 def test_local_grammar_v2_disables_external_visuals_and_bgm():

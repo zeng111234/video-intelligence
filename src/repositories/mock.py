@@ -27,6 +27,7 @@ from src.models import (
     SearchBatch,
     SyncReport,
     TaskRecord,
+    TaskStatus,
     TranscriptRevision,
     VideoCandidate,
     VideoMetricSnapshot,
@@ -458,6 +459,12 @@ class MockRepository:
         return self._tasks.get(task_id)
 
     def save_task(self, task: TaskRecord) -> None:
+        if task.status in {
+            TaskStatus.SUCCEEDED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        } and task.finished_at is None:
+            task = task.model_copy(update={"finished_at": task.updated_at})
         self._tasks[task.task_id] = task
 
     def delete_task(self, task_id: str) -> bool:

@@ -29,17 +29,30 @@ from src.models import (
     PublishTask,
     TaskStatus,
     TranscriptionTask,
-    VideoEditTask,
 )
 from src.services.publish_metadata import (
     publish_draft_fingerprint,
     suggested_publish_draft,
     validated_publish_draft,
 )
+from src.services.style_presets import PRESET_GRAMMAR_ONLY, list_preset_ids
 
 DEFAULT_PRODUCTION_TEMPLATE_ID = "short_video_optimize"
 BUNDLED_DEFAULT_PROFILE_NAME = "大树1"
 BUNDLED_DEFAULT_AVATAR_ID = "shuying-avatar-21920"
+LOCAL_VIDEO_EDIT_RECOVERY_KEY = "video_editing_recovery_v2"
+
+DISPLAY_TITLE_MAX_LENGTH = 120
+
+
+def normalize_display_title(value: str | None) -> str:
+    """把列表展示名限制在 UI 可承载的长度，不截断实际来源内容。"""
+    text = str(value or "").strip()
+    characters = list(text)
+    if len(characters) <= DISPLAY_TITLE_MAX_LENGTH:
+        return text
+    suffix = "…"
+    return "".join(characters[: DISPLAY_TITLE_MAX_LENGTH - len(suffix)]).rstrip() + suffix
 BUNDLED_DEFAULT_VOICE_ID = "shuying-voice-7869"
 
 
@@ -316,6 +329,7 @@ class ProductionService:
         name: str,
         profile_id: str,
         pipeline_service,
+        style_preset_id: str = PRESET_GRAMMAR_ONLY,
         candidate_ids: list[str] | None = None,
         source_items: list[dict[str, Any]] | None = None,
         idempotency_key: str = "",
@@ -331,6 +345,9 @@ class ProductionService:
             raise ValueError("请至少添加一条候选、链接、选题或完整文案。")
         if len(normalized_sources) > 400:
             raise ValueError("单个批次最多包含 400 条内容。")
+        style_preset_id = str(style_preset_id or PRESET_GRAMMAR_ONLY).strip()
+        if style_preset_id not in set(list_preset_ids()):
+            raise ValueError(f"不支持的剪辑风格：{style_preset_id}")
         getter = getattr(self.repository, "get_candidate", None)
 
         batch = ProductionBatch(
@@ -338,7 +355,7 @@ class ProductionService:
             profile_id=profile.profile_id,
             profile_name=profile.name,
             execution_config=self._with_idempotency_record(
-                {},
+                {"style_preset_id": style_preset_id},
                 operation="create",
                 key=idempotency_key,
                 request_hash=request_hash,
@@ -371,9 +388,9 @@ class ProductionService:
                     if candidate is None:
                         raise ValueError(f"候选不存在：{source_value}")
                 merged_profile = {**profile.model_dump(mode="json"), **overrides}
-                title = source["display_title"] or (
+                title = normalize_display_title(source["display_title"] or (
                     candidate.title if candidate is not None else source_value[:80]
-                )
+                ))
                 workflow = {
                     "candidate": "production_batch_candidate",
                     "share_link": "production_batch_share_link",
@@ -386,6 +403,7 @@ class ProductionService:
                         "source": "production_batch_plan",
                         "source_type": source_type,
                         "source_value": source_value,
+                        "style_preset_id": style_preset_id,
                         "share_text": (
                             str(candidate.source_url or "")
                             if candidate is not None
@@ -642,9 +660,9 @@ class ProductionService:
                 {
                     "source_type": source_type,
                     "source_value": value,
-                    "display_title": str(
+                    "display_title": normalize_display_title(
                         item.get("display_title") or item.get("title") or ""
-                    ).strip(),
+                    ),
                     "candidate_role": (
                         "reserve"
                         if source_type == "candidate"
@@ -1280,6 +1298,10 @@ class ProductionService:
                     **run.config,
                     "source": "production_batch",
                     "batch_id": batch.batch_id,
+                    "style_preset_id": str(
+                        execution_config.get("style_preset_id")
+                        or PRESET_GRAMMAR_ONLY
+                    ),
                     "profile": item_profile,
                     "rights_holder": execution_config["rights_holder"],
                     "rights_confirmed": execution_config["rights_confirmed"],
@@ -1662,6 +1684,16 @@ class ProductionService:
         items: list[ProductionBatchItem] = []
         for item in batch.items:
             run = self.repository.get_pipeline_run(item.run_id)
+            retryable_blocked_local_edit = bool(
+                run
+                and item.status == ProductionBatchItemStatus.BLOCKED
+                and run.status in {
+                    PipelineRunStatus.FAILED,
+                    PipelineRunStatus.PARTIAL,
+                }
+                and run.current_stage == PipelineStage.VIDEO_EDITING
+                and run.avatar_task_id
+            )
             retryable_avatar_pause = bool(
                 run
                 and item.status == ProductionBatchItemStatus.BLOCKED
@@ -1673,6 +1705,7 @@ class ProductionService:
             if (
                 item.status != ProductionBatchItemStatus.FAILED
                 and not retryable_avatar_pause
+                and not retryable_blocked_local_edit
             ) or run is None:
                 items.append(item)
                 continue
@@ -1697,57 +1730,11 @@ class ProductionService:
                 and current_avatar_task is not None
                 and current_avatar_task.status == TaskStatus.SUCCEEDED
             )
-            # One narrowly-scoped recovery is allowed for the known
-            # production alignment defect: the local edit failed only at the
-            # subtitle timeline gate because the avatar caption task was
-            # created without word timestamps.  This does not reopen a
-            # general edit retry loop or bypass any quality gate.
-            subtitle_alignment_recovery = False
-            if resume_existing_avatar:
-                caption_task = self.repository.get_task(
-                    str(run.config.get("caption_timing_task_id") or "")
-                )
-                caption_has_words = bool(
-                    caption_task is not None
-                    and any(
-                        bool(getattr(segment, "words", None))
-                        for segment in getattr(caption_task, "segments", [])
-                    )
-                )
-                latest_edit = None
-                for candidate_task in self.repository.list_tasks():
-                    if not isinstance(candidate_task, VideoEditTask):
-                        continue
-                    if getattr(candidate_task, "source_avatar_task_id", None) != run.avatar_task_id:
-                        continue
-                    if latest_edit is None or candidate_task.updated_at > latest_edit.updated_at:
-                        latest_edit = candidate_task
-                if latest_edit is not None:
-                    try:
-                        quality = json.loads(
-                            latest_edit.outputs.get("quality_report") or "{}"
-                        )
-                    except (TypeError, ValueError, json.JSONDecodeError):
-                        quality = {}
-                    false_checks = {
-                        key
-                        for key, passed in (quality.get("checks") or {}).items()
-                        if passed is False
-                    }
-                    subtitle_alignment_recovery = bool(
-                        not caption_has_words
-                        and false_checks <= {"subtitle_timeline"}
-                        and "subtitle_timeline" in false_checks
-                        and quality.get("subtitle_sync_passed") is False
-                    )
             # A failed local edit is a separate, non-billing recovery point.
             # Do not consume the one safe avatar retry that was already used
             # to create the existing successful avatar result.
             stage_key = (
-                "video_editing_subtitle_alignment"
-                if subtitle_alignment_recovery
-                else
-                PipelineStage.VIDEO_EDITING.value
+                LOCAL_VIDEO_EDIT_RECOVERY_KEY
                 if resume_existing_avatar
                 else retry_stage.value
                 if retry_stage
@@ -1802,6 +1789,17 @@ class ProductionService:
                 **run.config,
                 "stage_retry_counts": retry_counts,
             }
+            if resume_existing_avatar:
+                # The old edit result belongs to the failed attempt. Keeping
+                # these pointers makes the UI look recovered even when no new
+                # renderer task has actually run.
+                retry_config.pop("video_path", None)
+                retry_config.pop("output_reviewed", None)
+                retry_config.pop("publish_confirmed", None)
+                retry_config["local_edit_retry_pending"] = True
+                retry_config["retry_source_edit_task_id"] = str(
+                    run.edit_task_id or ""
+                )
             if retryable_avatar_pause:
                 retry_config.pop("recovery_blocked", None)
                 retry_config.pop("recovery_reason", None)
@@ -1839,6 +1837,8 @@ class ProductionService:
                 and not resume_existing_avatar
             ):
                 update["avatar_task_id"] = None
+            if resume_existing_avatar:
+                update["edit_task_id"] = None
             queued = run.model_copy(update=update)
             queued = pipeline_service._event(
                 queued,
@@ -1858,6 +1858,8 @@ class ProductionService:
                     update={
                         "status": ProductionBatchItemStatus.QUEUED,
                         "error_message": None,
+                        "blocked_reasons": [],
+                        "video_path": None,
                         "updated_at": now,
                     }
                 )
@@ -2842,7 +2844,7 @@ class ProductionService:
                     # 浏览器不能直接播放服务端所在电脑的 Windows 路径；统一
                     # 返回受控的媒体接口，接口会验证文件存在后再提供 MP4。
                     "result_media_url": (
-                        f"/api/v1/pipelines/{run.run_id}/media"
+                        f"/api/v1/pipelines/{run.run_id}/media?v={run.edit_task_id}"
                         if run is not None and video_path and Path(video_path).is_file()
                         else None
                     ),
@@ -3446,8 +3448,11 @@ class ProductionService:
             status = item.status
         else:
             status = ProductionBatchItemStatus.QUEUED
-        video_path = item.video_path
-        if not video_path:
+        retrying_local_edit = bool(
+            run.config.get("local_edit_retry_pending") and not run.edit_task_id
+        )
+        video_path = None if retrying_local_edit else item.video_path
+        if not video_path and not retrying_local_edit:
             for step in reversed(run.stages):
                 if step.stage == PipelineStage.VIDEO_EDITING:
                     video_path = (

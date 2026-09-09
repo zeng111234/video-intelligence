@@ -77,6 +77,7 @@ $env:VIDEOINSIGHT_DEMO_OWNER = "DEMO-0815"
 $env:VIDEOINSIGHT_CONTROL_PLANE_ENABLED = "false"
 $env:VIDEOINSIGHT_CONTROL_PLANE_URL = ""
 $env:VIDEOINSIGHT_RUNTIME_ROOT = $projectRoot
+$env:AUTH_SESSION_STORE = "sqlite"
 $backendDir = Join-Path $projectRoot "project\backend"
 $pythonCommand = Join-Path $projectRoot ".venv\Scripts\python.exe"
 $serviceLogDirectory = Join-Path $projectRoot "data\logs\services"

@@ -710,7 +710,7 @@ export function changeProductionBatchSpeechRate(
 
 export function reviewProductionBatchItems(
   batchId: string,
-  params: { stage: "transcript" | "script" | "output" | "publish"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string; creative_plan?: { hook: string; key_points: string[]; call_to_action: string; visual_sections: string[] }; publish_draft?: { title: string; description: string; tags: string[] } }> },
+  params: { stage: "transcript" | "script" | "output" | "publish"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string; skill_prompt?: string; target_length?: number; creative_plan?: { hook: string; key_points: string[]; call_to_action: string; visual_sections: string[] }; publish_draft?: { title: string; description: string; tags: string[] } }> },
 ): Promise<{ batch: ProductionBatch; results: ProductionBatchReviewResult[] }> {
   return request(`/production/batches/${encodeURIComponent(batchId)}/reviews`, {
     method: "POST",
@@ -1489,6 +1489,8 @@ export function rewriteCopywriting(params: {
   source_text: string;
   target_audience?: string;
   style_prompt?: string;
+  skill_prompt?: string;
+  target_length?: number;
   tone?: string;
   variant_count?: number;
 }): Promise<CopywritingResponse> {
@@ -2180,7 +2182,7 @@ export function createVideoEditorBatch(params: {
   bgmId?: string;
   bgmVolume?: number;
   outputProfile?: VideoEditorOutputProfile;
-  stylePresetId?: "talking-head-pure-adaptive-v1" | "talking-head-brand-emphasis-v1" | "talking-head-local-grammar-v2";
+  stylePresetId?: "talking-head-pure-adaptive-v1" | "talking-head-brand-emphasis-v1" | "talking-head-semantic-adaptive-v1" | "talking-head-local-grammar-v2" | "talking-head-grammar-only-v1";
   quoteId?: string;
   billingConfirmation?: {
     confirmed: boolean;

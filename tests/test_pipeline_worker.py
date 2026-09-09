@@ -385,6 +385,7 @@ def test_production_edit_uses_current_smart_template_and_never_legacy_editor(tmp
             "approved_script_text": copy_task.result_text,
             "publish_enabled": False,
             "profile": {"tags": ["餐饮获客"]},
+            "style_preset_id": "talking-head-brand-emphasis-v1",
         },
     ).model_copy(
         update={
@@ -435,6 +436,7 @@ def test_production_edit_uses_current_smart_template_and_never_legacy_editor(tmp
     assert smart_calls[0]["script_text"] == copy_task.result_text
     assert smart_calls[0]["subtitle_segments"] == subtitle_segments
     assert smart_calls[0]["subtitle_task_id"] is None
+    assert smart_calls[0]["style_preset_id"] == "talking-head-brand-emphasis-v1"
     stored = repository.get_pipeline_run(run.run_id)
     assert stored is not None
     assert stored.status == PipelineRunStatus.SUCCEEDED

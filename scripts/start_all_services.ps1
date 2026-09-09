@@ -124,6 +124,7 @@ $services = @(
             VIDEOINSIGHT_CONTROL_PLANE_ENABLED = if ($UseCompanyServer) { "true" } else { "false" }
             VIDEOINSIGHT_CONTROL_PLANE_URL = $companyServerOrigin
             VIDEOINSIGHT_RUNTIME_ROOT = $runtimeRoot
+            AUTH_SESSION_STORE = "sqlite"
             # The source preview must see the same local media tools as the
             # packaged backend, otherwise the UI can be current while formal
             # rendering silently falls back to the old compatibility path.

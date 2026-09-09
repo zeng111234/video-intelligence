@@ -1162,6 +1162,7 @@ class TaskRecord(BaseModel):
     progress: int = Field(ge=0, le=100)
     created_at: datetime
     updated_at: datetime
+    finished_at: datetime | None = None
     elapsed_seconds: float | None = Field(default=None, ge=0)
     error_message: str | None = None
     retry_count: int = Field(default=0, ge=0, le=1)
@@ -1252,6 +1253,8 @@ class CopywritingTask(TaskRecord):
     selling_points: str = ""
     call_to_action: str = ""
     style_prompt: str = ""
+    # 客户可复用的蒸馏规则；与基础风格分开保存，便于历史任务恢复。
+    skill_prompt: str = ""
     target_length: int = Field(default=300, ge=50, le=2000)
     tone: str = "professional"
     rewrite_goal: str = ""

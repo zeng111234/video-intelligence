@@ -431,6 +431,7 @@ def build_sparse_asset_plan(
     max_pip: int = SPARSE_ASSET_MAX_PIP,
     max_full: int = SPARSE_ASSET_MAX_FULL,
     allow_generated_preview: bool = False,
+    semantic_annotations: Sequence[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Select a few high-value local assets, with an auditable rejection log."""
 
@@ -440,12 +441,14 @@ def build_sparse_asset_plan(
 
         annotations_by_index = {
             int(item.get("source_segment_index")): item
-            for item in annotate_transcript_segments(
-                segments, duration_seconds=duration_seconds
+            for item in (
+                semantic_annotations
+                if semantic_annotations is not None
+                else annotate_transcript_segments(segments, duration_seconds=duration_seconds)
             )
             if isinstance(item, Mapping) and item.get("source_segment_index") is not None
         }
-    except Exception:
+    except (AttributeError, ImportError, KeyError, TypeError, ValueError):
         annotations_by_index = {}
 
     eligible_assets = [

@@ -2528,18 +2528,19 @@ def _apply_adaptive_caption_effects(
     *,
     grammar_mode: bool = False,
 ) -> None:
-    """Apply a short sentence entrance with sparse semantic accents.
+    """Apply a quiet caption baseline with sparse semantic accents.
 
-    Every cue gets one elastic entrance and then becomes static.  The stronger
+    Ordinary cues are static after a short 120ms fade-in.  The stronger
     word-level effects remain reserved for reviewed numbers, conclusions,
-    methods, warnings, and CTAs.
+    methods, warnings, and CTAs; a whole sentence must not bounce on every
+    cue because that makes a long talking-head edit tiring to watch.
     """
 
     for index, cue in enumerate(cues):
         cue["entry_motion"] = {
-            "type": "elastic_pop",
-            "duration_ms": 180,
-            "scale_from": 0.90,
+            "type": "fade_in",
+            "duration_ms": 120,
+            "scale_from": 1.0,
         }
         cue["subtitle_style_id"] = "adaptive_talking_head_v1"
         existing_range = cue.get("emphasis_range")
@@ -2586,18 +2587,10 @@ def _apply_adaptive_caption_effects(
         (float(cue.get("end") or 0) for cue in cues),
         default=0.0,
     )
-    # Give a one-minute talking-head clip up to ten semantic keyword beats.
-    # This is a subtitle layer, so it can be denser than symbols or SFX while
-    # remaining bounded and temporally spaced.
-    # The grammar renderer has transcript-grounded candidates for every
-    # semantic segment.  Its previous 10/minute cap left long edits looking
-    # like plain white captions after the opening.  Allow a denser but still
-    # bounded editorial rhythm only for that explicitly opted-in mode; the
-    # ordinary adaptive renderer keeps its historical cap.
-    total_budget = max(
-        1,
-        math.ceil(max_end / 60 * (14 if grammar_mode else 10)),
-    )
+    # Keep strong events inside the product contract: 3-5 per 60 seconds.
+    # Use the upper bound so a short clip still has enough editorial accents,
+    # while the spacing guard below prevents adjacent cues from piling up.
+    total_budget = max(1, math.ceil(max_end / 60 * 5))
     # The candidate list is already grounded and one-per-segment.  Do not let
     # an arbitrary time bucket discard a later result or CTA beat; the
     # temporal spacing guard below remains the actual density limiter.
@@ -2919,6 +2912,14 @@ def _caption_kinetic_words_for_cue(
             or original_end <= emphasis_start
             or original_start >= emphasis_end
         ):
+            normalized_cursor = position + len(word)
+            continue
+        # A provider/ASR lexical word can straddle the selected semantic
+        # range (for example ``说免`` while the intended emphasis is
+        # ``免维护``). Do not color the unrelated preceding character. The
+        # exact static emphasis range below remains responsible for the
+        # character-precise highlight in this case.
+        if original_start < emphasis_start or original_end > emphasis_end:
             normalized_cursor = position + len(word)
             continue
         try:
@@ -3519,15 +3520,58 @@ def build_business_talking_head_overlay_preview(
                 segment_end=end,
                 spoken_ranges=spoken_ranges,
             )
+        # A provider may expose an indivisible lexical token that is longer
+        # than the normal phone-caption dwell ceiling (for example a standard
+        # number or product code).  Capping that token would make the burned
+        # cue end before the spoken word ends, which is worse than a slightly
+        # longer readable cue.  Track only the exact one-token case; ordinary
+        # multi-word cues must still be split/capped by the existing rules.
+        clock_cursor = 0
+
+        def clock_text(value: object) -> str:
+            return re.sub(
+                r"[\s，。！？、,.!?；;：:]+",
+                "",
+                _caption_display_cleanup(str(value or "")),
+            ).replace("呢", "").replace("的", "")
+
         for index, chunk in enumerate(chunks):
             cue_start, cue_end = (
                 round(cue_timings[index][0], 3),
                 round(cue_timings[index][1], 3),
             )
+            indivisible_word_span = False
+            target_clock_text = clock_text(chunk)
+            if word_timings and target_clock_text and word_clock_words:
+                accumulated_clock_text = ""
+                matched_word_indices: list[int] = []
+                for word_index in range(clock_cursor, len(word_clock_words)):
+                    word_text = clock_text(word_clock_words[word_index].get("text"))
+                    if not word_text:
+                        continue
+                    candidate_clock_text = clock_text(
+                        accumulated_clock_text + word_text
+                    )
+                    if not target_clock_text.startswith(candidate_clock_text):
+                        break
+                    accumulated_clock_text = candidate_clock_text
+                    matched_word_indices.append(word_index)
+                    if accumulated_clock_text == target_clock_text:
+                        break
+                if (
+                    accumulated_clock_text == target_clock_text
+                    and matched_word_indices
+                ):
+                    indivisible_word_span = len(matched_word_indices) == 1
+                    clock_cursor = matched_word_indices[-1] + 1
             # Decimal rounding can make an otherwise exact 2.4s span compare
             # as 2.4000000000000004 in Python. Trim only that floating-point
-            # residue; genuine overlong cues remain subject to the hard gate.
-            if cue_end - cue_start >= _CAPTION_MAX_DURATION_SECONDS - 1e-9:
+            # residue; preserve an indivisible real-word span even when the
+            # provider token itself is longer than the display ceiling.
+            if (
+                cue_end - cue_start >= _CAPTION_MAX_DURATION_SECONDS - 1e-9
+                and not indivisible_word_span
+            ):
                 cue_end = math.nextafter(
                     cue_start + _CAPTION_MAX_DURATION_SECONDS,
                     cue_start,
@@ -3609,7 +3653,9 @@ def build_business_talking_head_overlay_preview(
                     ),
                     "_segment_index": segment_index,
                     "source_segment_index": segment_index,
-                    "lexical_boundary_exception": None,
+                    "lexical_boundary_exception": (
+                        "compound_phrase" if indivisible_word_span else None
+                    ),
                     "word_clock_mapping": (
                         "exact_or_reviewed_text_sequence_alignment"
                         if word_timings
@@ -3686,7 +3732,11 @@ def build_business_talking_head_overlay_preview(
             for cue, (cue_start, cue_end) in zip(segment_cues, exact, strict=True):
                 normalized_start = round(cue_start, 3)
                 normalized_end = round(cue_end, 3)
-                if normalized_end - normalized_start >= _CAPTION_MAX_DURATION_SECONDS - 1e-9:
+                if (
+                    normalized_end - normalized_start
+                    >= _CAPTION_MAX_DURATION_SECONDS - 1e-9
+                    and cue.get("lexical_boundary_exception") != "compound_phrase"
+                ):
                     normalized_end = math.nextafter(
                         normalized_start + _CAPTION_MAX_DURATION_SECONDS,
                         normalized_start,
@@ -3839,7 +3889,11 @@ def build_business_talking_head_overlay_preview(
                 for cue, (cue_start, cue_end) in zip(segment_cues, exact, strict=True):
                     normalized_start = round(cue_start, 3)
                     normalized_end = round(cue_end, 3)
-                    if normalized_end - normalized_start >= _CAPTION_MAX_DURATION_SECONDS - 1e-9:
+                    if (
+                        normalized_end - normalized_start
+                        >= _CAPTION_MAX_DURATION_SECONDS - 1e-9
+                        and cue.get("lexical_boundary_exception") != "compound_phrase"
+                    ):
                         normalized_end = math.nextafter(
                             normalized_start + _CAPTION_MAX_DURATION_SECONDS,
                             normalized_start,
@@ -4008,7 +4062,11 @@ def build_business_talking_head_overlay_preview(
                 ):
                     normalized_start = round(cue_start, 3)
                     normalized_end = round(cue_end, 3)
-                    if normalized_end - normalized_start >= _CAPTION_MAX_DURATION_SECONDS - 1e-9:
+                    if (
+                        normalized_end - normalized_start
+                        >= _CAPTION_MAX_DURATION_SECONDS - 1e-9
+                        and cue.get("lexical_boundary_exception") != "compound_phrase"
+                    ):
                         normalized_end = math.nextafter(
                             normalized_start + _CAPTION_MAX_DURATION_SECONDS,
                             normalized_start,
@@ -4077,11 +4135,11 @@ def build_business_talking_head_overlay_preview(
             ),
             "outline_px": [2.0, 2.5] if isinstance(style_preset, Mapping) and style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY" else [4.0, 6.0],
             "shadow_px": [1.0, 1.5] if isinstance(style_preset, Mapping) and style_preset.get("grammar_mode") == "JY_CLONE_GRAMMAR_ONLY" else [1.0, 3.0],
-            "entry_motion": "elastic_pop_180ms",
+            "entry_motion": "fade_in_120ms",
             "word_motion": "selective_word_emphasis_v3",
             "keyword_motion": "semantic_effect_mix_v2",
             "kinetic_styles": list(_CAPTION_KINETIC_STYLE_IDS),
-            "caption_motion_policy": "entry_pop_static_after_settle_selective_semantic_emphasis",
+            "caption_motion_policy": "fade_in_static_after_settle_selective_semantic_emphasis",
             "strong_effect_density": "3_to_5_per_60s",
             "emphasis_scale_range": [1.08, 1.08],
             "emphasis_duration_ms": [180, 240],
@@ -4327,22 +4385,12 @@ def _ass_caption_text(
     entry_ms = 120
     if isinstance(entry, Mapping):
         entry_ms = max(100, min(160, int(entry.get("duration_ms") or 120)))
-        entry_scale = max(90, min(98, round(float(entry.get("scale_from") or 0.94) * 100)))
-    else:
-        entry_scale = 94
     # Keep the shared baseline readable while restoring a visible, restrained
     # cue entrance.  This is applied to the complete cue (not per character)
     # so it cannot change the speech clock or create word-by-word jitter.
-    entry_type = str(entry.get("type") or "") if isinstance(entry, Mapping) else ""
-    entry_tag = (
-        f"{{\\fad({entry_ms},0)}}"
-        if entry_type == "fade_in"
-        else (
-            f"{{\\fad({entry_ms},0)\\fscx{entry_scale}\\fscy{entry_scale}"
-            f"\\frz-1\\blur1.4\\t(0,{entry_ms},1.35,"
-            f"\\fscx100\\fscy100\\frz0\\blur0)}}"
-        )
-    )
+    # Unknown/legacy motion values deliberately fall back to the same fade;
+    # an old cached task must not resurrect the former whole-cue elastic pop.
+    entry_tag = f"{{\\fad({entry_ms},0)}}"
     kinetic_mode = str(cue.get("kinetic_mode") or "")
     kinetic_style = str(cue.get("kinetic_style") or "")
     if kinetic_mode == "word_pop" and cue.get("kinetic_words"):
@@ -4477,9 +4525,9 @@ def build_business_talking_head_ass(
         # allowed whole-cue transform is this short entrance; it settles back
         # to a static caption and cannot resurrect continuous movement.
         cue["entry_motion"] = {
-            "type": "elastic_pop",
-            "duration_ms": 180,
-            "scale_from": 0.90,
+            "type": "fade_in",
+            "duration_ms": 120,
+            "scale_from": 1.0,
         }
         if selective_preview:
             # A persisted v3 preview can still contain kinetic_words written

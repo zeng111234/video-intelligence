@@ -1767,7 +1767,7 @@ export default function VideoEditorPage() {
         sourceIds: [selectedSourceId],
         targetPlatform: platform,
         outputProfile,
-        stylePresetId: "talking-head-grammar-only-v1",
+        stylePresetId: "talking-head-semantic-adaptive-v1",
         quoteId: quote.quote_id,
         billingConfirmation: {
           confirmed: true,
@@ -2458,7 +2458,7 @@ export default function VideoEditorPage() {
                 )}
                 {activeMotionEvent && (
                   <div
-                    className={`video-editor-motion-accent video-editor-motion-${activeMotionEvent.style_id}`}
+                    className={`video-editor-motion-accent video-editor-motion-${activeMotionEvent.style_id} video-editor-motion-verb-${activeMotionEvent.visual_verb || "legacy"}`}
                     data-testid="semantic-motion-accent"
                     aria-hidden="true"
                   >
@@ -3283,6 +3283,38 @@ export default function VideoEditorPage() {
         @keyframes video-editor-motion-stamp{0%{opacity:0;transform:translate(-50%,-50%) scale(.72) rotate(-8deg)}72%{opacity:1;transform:translate(-50%,-50%) scale(1.06) rotate(2deg)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1) rotate(0)}}
         @keyframes video-editor-motion-burst{0%{opacity:0;transform:translate(-50%,-50%) scale(.65)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1)}}
         @keyframes video-editor-motion-shake{0%,100%{transform:translate(-50%,-50%) translateX(0)}25%{transform:translate(-50%,-50%) translateX(-5px) rotate(-1deg)}50%{transform:translate(-50%,-50%) translateX(5px) rotate(1deg)}75%{transform:translate(-50%,-50%) translateX(-3px)}}
+        /* New semantic visual verbs: restrained linework attached to the caption, not a floating badge. */
+        .video-editor-motion-accent[class*="video-editor-motion-verb-"]{left:50%;top:70%;width:46%;height:14%;opacity:.84;filter:none;animation:video-editor-motion-accent-in 180ms ease-out both}
+        .video-editor-motion-accent[class*="video-editor-motion-verb-"]::before,.video-editor-motion-accent[class*="video-editor-motion-verb-"]::after{display:none!important}
+        .video-editor-motion-accent[class*="video-editor-motion-verb-"] .motion-ray{left:auto;top:auto;width:auto;height:2px;margin:0;border-radius:1px;background:var(--motion-accent-color,#e7c77b);box-shadow:none;opacity:.82;transform-origin:left center}
+        .video-editor-motion-verb-reveal{--motion-accent-color:#c9b8f2}
+        .video-editor-motion-verb-reveal .motion-ray:nth-child(1){left:32%;top:64%;width:4px;height:28%;transform:none}
+        .video-editor-motion-verb-reveal .motion-ray:nth-child(2){left:48%;top:45%;width:4px;height:47%;transform:none}
+        .video-editor-motion-verb-reveal .motion-ray:nth-child(3){left:64%;top:22%;width:4px;height:70%;transform:none}
+        .video-editor-motion-verb-accumulate{--motion-accent-color:#a9d9c4}
+        .video-editor-motion-verb-accumulate .motion-ray:nth-child(1){left:31%;top:60%;width:5px;height:32%;transform:none}
+        .video-editor-motion-verb-accumulate .motion-ray:nth-child(2){left:48%;top:43%;width:5px;height:49%;transform:none}
+        .video-editor-motion-verb-accumulate .motion-ray:nth-child(3){left:65%;top:25%;width:5px;height:67%;transform:none}
+        .video-editor-motion-verb-compare{--motion-accent-color:#f0bd9e}
+        .video-editor-motion-verb-compare .motion-ray:nth-child(1){left:17%;top:31%;width:30%;height:2px;transform:none}
+        .video-editor-motion-verb-compare .motion-ray:nth-child(2){left:53%;top:65%;width:30%;height:2px;transform:none}
+        .video-editor-motion-verb-compare .motion-ray:nth-child(3){left:47%;top:18%;width:2px;height:68%;transform:rotate(27deg)}
+        .video-editor-motion-verb-flow{--motion-accent-color:#b9d5ff}
+        .video-editor-motion-verb-flow .motion-ray:nth-child(1){left:22%;top:22%;width:48%;height:52%;border-top:2px solid var(--motion-accent-color);border-right:2px solid var(--motion-accent-color);background:transparent;border-radius:0 80% 0 0;transform:none;opacity:.58}
+        .video-editor-motion-verb-flow .motion-ray:nth-child(2){left:58%;top:46%;width:20%;height:2px;transform:none}
+        .video-editor-motion-verb-flow .motion-ray:nth-child(3){left:75%;top:39%;width:10%;height:10px;border-top:2px solid var(--motion-accent-color);border-right:2px solid var(--motion-accent-color);background:transparent;transform:rotate(45deg);opacity:.82}
+        .video-editor-motion-verb-impact{--motion-accent-color:#f0c56f}
+        .video-editor-motion-verb-impact .motion-ray:nth-child(1){left:25%;top:73%;width:50%;height:3px;transform:rotate(-2deg)}
+        .video-editor-motion-verb-impact .motion-ray:nth-child(2){left:38%;top:39%;width:18%;height:2px;transform:rotate(-40deg)}
+        .video-editor-motion-verb-impact .motion-ray:nth-child(3){left:58%;top:42%;width:18%;height:2px;transform:rotate(38deg)}
+        .video-editor-motion-verb-resolve{--motion-accent-color:#9fd7bd}
+        .video-editor-motion-verb-resolve .motion-ray:nth-child(1){left:27%;top:48%;width:18%;height:3px;transform:rotate(42deg)}
+        .video-editor-motion-verb-resolve .motion-ray:nth-child(2){left:39%;top:57%;width:30%;height:3px;transform:rotate(-47deg)}
+        .video-editor-motion-verb-resolve .motion-ray:nth-child(3){left:62%;top:69%;width:21%;height:2px;transform:none;opacity:.48}
+        .video-editor-motion-verb-warning{--motion-accent-color:#e7a49b}
+        .video-editor-motion-verb-warning .motion-ray:nth-child(1){left:48%;top:15%;width:2px;height:70%;transform:rotate(26deg)}
+        .video-editor-motion-verb-warning .motion-ray:nth-child(2){left:25%;top:34%;width:18%;height:2px;transform:rotate(-8deg);opacity:.45}
+        .video-editor-motion-verb-warning .motion-ray:nth-child(3){left:59%;top:70%;width:18%;height:2px;transform:rotate(-8deg);opacity:.45}
          .video-editor-preview-footer{display:flex;flex:none;padding:7px 16px 9px;border-top:1px solid rgba(255,255,255,.1);background:#151a24}
         .video-editor-preview-footer .ant-typography,.video-editor-preview-footer .ant-btn{color:#f8fafc}
         .video-editor-timeline-time{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}

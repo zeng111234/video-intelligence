@@ -15,6 +15,17 @@ def test_road_phrase_gets_caption_integrated_road_visual():
     assert events[0]["action"] == "symbol_overlay"
     assert events[0]["symbol"] == "arrow"
     assert events[0]["camera_action"] == "reframe_right"
+    assert events[0]["visual_verb"] == "flow"
+    assert events[0]["visual_language"] == "editorial_line_v1"
+
+
+def test_generic_keyword_uses_caption_only_instead_of_a_floating_icon():
+    events = build_semantic_motion_events(
+        [{"start": 0.0, "end": 2.0, "text": "业务员一旦离职"}],
+        duration_seconds=2.0,
+    )
+    assert events[0]["semantic_kind"] == "keyword"
+    assert events[0]["render_policy"] == "caption_only"
 
 
 def test_numbered_benefit_phrase_gets_burst_visual_instead_of_plain_number_pulse():

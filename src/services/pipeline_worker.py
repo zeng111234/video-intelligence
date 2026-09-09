@@ -29,6 +29,7 @@ from src.models import (
 from src.services.avatar import AvatarServiceUnavailableError
 from src.services.production import candidate_xiaohongshu_search_keyword
 from src.services.publish_metadata import suggested_publish_draft
+from src.services.style_presets import PRESET_GRAMMAR_ONLY
 
 logger = logging.getLogger(__name__)
 
@@ -394,6 +395,7 @@ class PipelineWorker:
                         "style_prompt": str(
                             config["profile"].get("script_style") or ""
                         ),
+                        "skill_prompt": "",
                         "variant_count": 1,
                     },
                 },
@@ -441,6 +443,7 @@ class PipelineWorker:
                 tone=str(request.get("tone") or "casual"),
                 target_audience=str(request.get("target_audience") or ""),
                 style_prompt=str(request.get("style_prompt") or ""),
+                skill_prompt=str(request.get("skill_prompt") or ""),
                 variant_count=1,
                 existing_run=run,
             )
@@ -1093,6 +1096,9 @@ class PipelineWorker:
                 publish_title=draft["title"],
                 subtitle_segments=subtitle_segments,
                 subtitle_task_id=subtitle_task_id,
+                style_preset_id=str(
+                    run.config.get("style_preset_id") or PRESET_GRAMMAR_ONLY
+                ),
             )
         except Exception as exc:
             self._fail(
@@ -1120,13 +1126,15 @@ class PipelineWorker:
             self.pipeline_service.complete_run(run, success=True)
             return
         if str(run.config.get("workflow") or "").startswith("production_batch_"):
+            completed_config = dict(run.config)
+            completed_config.pop("local_edit_retry_pending", None)
             paused = run.model_copy(
                 update={
                     "status": PipelineRunStatus.PAUSED,
                     "current_stage": PipelineStage.PUBLISHING,
                     "updated_at": datetime.now().astimezone(),
                     "config": {
-                        **run.config,
+                        **completed_config,
                         "video_path": edit_task.result_path,
                         "publish_confirmed": False,
                     },

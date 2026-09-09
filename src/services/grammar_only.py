@@ -65,6 +65,42 @@ _GENERIC_QUANTITY_TERMS = frozenset(
     {"一个", "一个月", "一种", "一份", "一套", "一张", "一次", "几次", "几个"}
 )
 
+_CTA_IMPERATIVE = re.compile(
+    r"(?:请|记得|别忘|欢迎|马上|立即|赶紧|可以|不妨|一定要|帮忙|去|来)"
+    r"[^。！？!?，,]{0,8}(?:评论|留言|关注|私信|领取|收藏|转发|下单|点击)"
+)
+_CONTENT_FILLERS = frozenset(
+    {"然后", "所以", "但是", "就是", "这个", "那个", "其实", "我们", "大家", "可以", "开始", "结束"}
+)
+
+
+def _cta_term(source: str) -> str | None:
+    """Return an actionable CTA marker, not a topical use of the same word."""
+
+    direct = ("评论", "留言", "私信", "领取", "转发", "下单", "点击")
+    term = _candidate(source, direct)
+    if term:
+        return term
+    if _CTA_IMPERATIVE.search(source) or re.search(
+        r"(?:关注|收藏)(?:我|我们|账号|主页|一下|起来|本期|这条|视频)(?:吧|哦|呀|啊)?$",
+        source,
+    ):
+        return _candidate(source, ("关注", "收藏"))
+    return None
+
+
+def _contentful_anchor(source: str, anchors: Sequence[str]) -> str | None:
+    """Promote an unfamiliar concrete concept without topic-specific words."""
+
+    for anchor in anchors:
+        value = re.sub(r"\s+", "", anchor)
+        if not 3 <= len(value) <= 10 or value in _CONTENT_FILLERS:
+            continue
+        tokens = jieba_posseg.lcut(value, HMM=True)
+        if any(str(token.flag or "")[:1] in {"n", "a"} for token in tokens):
+            return value
+    return None
+
 
 def _useful_chinese_number(value: str) -> bool:
     """Reject isolated quantity characters such as the ``一`` in ``一点``."""
@@ -219,7 +255,7 @@ _KEYWORD_STOPWORDS = frozenset(
         "真的", "大家", "时候", "地方", "东西", "什么", "怎么", "如何", "有人",
         "这种", "那种", "这里", "那里", "以后", "之前", "之后",
         "办完", "马上", "送一", "半个", "每笔", "一份", "一套",
-        "一个", "一个月", "一种", "一张", "一次", "几次", "几个",
+        "一个月", "一种", "一张", "一次", "几次", "几个",
         "你的", "也", "还", "再", "才", "挺", "很", "都", "能", "会", "要",
         "把", "给", "从", "向", "在", "与", "和", "等于", "所有", "这样",
         "那样", "一下", "只是", "正在", "通过",
@@ -385,6 +421,86 @@ def _keyword_candidates(source: str, primary: str) -> list[str]:
     return values[:2]
 
 
+_REPORTING_MARKERS = ("宣称", "声称", "承诺", "保证", "表示", "告诉", "说", "称")
+_REPORTING_TAIL_FILLERS = re.compile(
+    r"^(?:成|是|为|有|会|能|可以|能够|还|也|就|给|把|让)"
+)
+
+
+def _warning_keyword_candidates(source: str, primary: str) -> list[str]:
+    """Prefer the warned-about object over the speaker/reporting fragment.
+
+    A provider may return a useful role but an awkward lexical range such as
+    ``销售说免``.  Reporting verbs are language structure, not the warning's
+    subject.  We therefore derive the short tail after the first reporting
+    marker, while keeping the result grounded in this exact source segment.
+    """
+
+    clean_source = re.sub(r"\s+", "", str(source or ""))
+    for marker in sorted(_REPORTING_MARKERS, key=len, reverse=True):
+        marker_index = clean_source.find(marker)
+        if marker_index < 0:
+            continue
+        tail = clean_source[marker_index + len(marker):].strip(" ，,、:：")
+        tail = _REPORTING_TAIL_FILLERS.sub("", tail).strip(" ，,、:：")
+        if not (2 <= len(tail) <= 8 and tail in clean_source):
+            continue
+        lexical = jieba_posseg.lcut(tail, HMM=True)
+        if any(
+            str(token.flag or "")[:1] in {"n", "v", "a"}
+            and str(token.word or "") not in _KEYWORD_STOPWORDS
+            for token in lexical
+        ):
+            return [tail]
+
+    candidates = _keyword_candidates(clean_source, primary)
+    filtered = [
+        value for value in candidates
+        if not any(marker in value for marker in _REPORTING_MARKERS)
+    ]
+    return filtered or candidates
+
+
+def _complete_emphasis_phrase(
+    semantic_text: str,
+    source_text: str,
+    candidates: Sequence[str],
+    *,
+    max_length: int,
+) -> str:
+    """Return a complete grounded phrase; never prefix-clip semantic text."""
+
+    clean_semantic = re.sub(r"\s+", "", str(semantic_text or ""))
+    if 2 <= len(clean_semantic) <= max_length:
+        return clean_semantic
+
+    grounded: list[str] = []
+    for value in candidates:
+        clean_value = re.sub(r"\s+", "", str(value or ""))
+        if (
+            2 <= len(clean_value) <= max_length
+            and clean_value in source_text
+            and clean_value not in grounded
+        ):
+            grounded.append(clean_value)
+    if not grounded:
+        return ""
+
+    # For long phrases, a leading reporting/imperative verb is usually
+    # sentence scaffolding. Prefer the grounded noun/adjective object when a
+    # shorter complete candidate is available (e.g. ``国标`` over ``认准国标``).
+    non_verb: list[str] = []
+    for value in grounded:
+        first_token = next(
+            (token for token in jieba_posseg.lcut(value, HMM=True) if str(token.word or "")),
+            None,
+        )
+        if first_token is None or not str(first_token.flag or "").startswith("v"):
+            non_verb.append(value)
+    pool = non_verb or grounded
+    return max(pool, key=lambda value: (len(value), -grounded.index(value)))
+
+
 def _annotation(segment: Mapping[str, Any], index: int, term: str, roles: list[str], importance: float, emotion: str = "neutral") -> dict[str, Any]:
     source = _text(segment)
     start = float(segment.get("start") or 0)
@@ -457,7 +573,7 @@ def annotate_transcript_segments(segments: Sequence[Mapping[str, Any]], *, durat
             (_POSITIVE + _BENEFIT, "POSITIVE", "positive", 0.80),
             (_NEGATIVE, "NEGATIVE", "negative", 0.84),
         ):
-            term = _candidate(source, patterns)
+            term = _cta_term(source) if role == "CTA" else _candidate(source, patterns)
             if role == "NEGATIVE" and positive_degree:
                 # In phrases such as “效果好的不行”, “不行” is an
                 # intensifier.  It must never become a red-X event.
@@ -468,12 +584,13 @@ def annotate_transcript_segments(segments: Sequence[Mapping[str, Any]], *, durat
             # A short phrase from the actual segment is a legal low-information
             # beat; it never invents a subject or an answer.
             anchors = _keyword_candidates(source, "")
-            term = anchors[0] if anchors else source[: min(6, len(source))]
+            content_anchor = _contentful_anchor(source, anchors)
+            term = content_anchor or (anchors[0] if anchors else source[: min(6, len(source))])
             matches.append(
                 (
                     term,
-                    ["LOW_INFORMATION"],
-                    0.56 if anchors else 0.42,
+                    ["KEY_CLAIM"] if content_anchor else ["LOW_INFORMATION"],
+                    0.78 if content_anchor else (0.56 if anchors else 0.42),
                     "neutral",
                 )
             )
@@ -494,10 +611,14 @@ def annotate_transcript_segments(segments: Sequence[Mapping[str, Any]], *, durat
             "POSITIVE": 3,
             "KEY_CLAIM": 2,
         }
-        def match_priority(match: tuple[str, list[str], float, str]) -> tuple[int, float, int]:
+        def match_priority(
+            match: tuple[str, list[str], float, str],
+            *,
+            priority: Mapping[str, int] = role_priority,
+        ) -> tuple[int, float, int]:
             match_roles = match[1]
             return (
-                max((role_priority.get(role, 1) for role in match_roles), default=1),
+                max((priority.get(role, 1) for role in match_roles), default=1),
                 float(match[2]),
                 len(match[0]),
             )
@@ -591,11 +712,14 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
 
     events: list[dict[str, Any]] = []
     high_count = 0
+    text_emphasis_count = 0
+    last_text_emphasis_start = -100.0
+    last_camera_start = -100.0
     for index, annotation in enumerate(annotations):
         roles = [str(role) for role in annotation.get("semantic_roles") or [] if str(role) in SEMANTIC_ROLES]
         if not roles:
             continue
-        role = next((item for item in ("PRICE", "PERCENT", "NUMBER", "WARNING", "NEGATIVE", "POSITIVE", "QUESTION", "CONCLUSION", "CTA", "STEP", "PROCESS", "PRODUCT", "KEY_CLAIM", "HOOK") if item in roles), "LOW_INFORMATION")
+        role = next((item for item in ("PRICE", "PERCENT", "NUMBER", "WARNING", "NEGATIVE", "POSITIVE", "QUESTION", "CONCLUSION", "CTA", "STEP", "PROCESS", "PRODUCT", "HOOK", "KEY_CLAIM") if item in roles), "LOW_INFORMATION")
         semantic_text = str(annotation.get("semantic_text") or annotation.get("text") or "")
         source_text = str(annotation.get("source_text") or "")
         if not semantic_text or semantic_text not in source_text:
@@ -617,6 +741,23 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
             str(value) for value in annotation.get("keyword_candidates") or []
             if str(value) and str(value) in source_text
         ]
+        # MiniMax is intentionally responsible for semantic roles and a
+        # grounded phrase, not for the local lexical field.  Older provider
+        # responses therefore need a deterministic, transcript-grounded
+        # candidate derivation instead of silently producing zero events.
+        if not keyword_candidates:
+            keyword_candidates = [
+                str(value)
+                for value in _keyword_candidates(source_text, semantic_text)
+                if str(value) and str(value) in source_text
+            ]
+        if role in {"WARNING", "NEGATIVE"}:
+            # Recompute this narrow lexical field even when a provider sent
+            # one: the role is semantic, while the reporting fragment is not
+            # the thing that should receive the visual weight.
+            keyword_candidates = _warning_keyword_candidates(
+                source_text, semantic_text
+            )
         # LOW_INFORMATION segments may still contribute one grounded noun or
         # action, but never promote the whole sentence as a fake keyword.
         if not keyword_candidates:
@@ -644,13 +785,18 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
                 ),
             })
         camera = None
-        if role in {"HOOK", "KEY_CLAIM", "NUMBER", "PRICE", "PERCENT", "WARNING", "CONCLUSION", "CTA"}:
+        if role in {
+            "HOOK", "KEY_CLAIM", "NUMBER", "PRICE", "PERCENT", "WARNING",
+            "POSITIVE", "CONCLUSION", "CTA", "PRODUCT", "PROCESS", "STEP",
+        }:
             camera = (
                 "punch_in_medium"
                 if role in {"PRICE", "NUMBER", "PERCENT", "WARNING"} and importance >= 0.88
+                else "slow_push"
+                if role in {"PRODUCT", "PROCESS", "STEP"}
                 else "punch_in_soft"
             )
-        if camera:
+        if camera and start - last_camera_start >= 4.5:
             events.append({
                 "event_id": f"grammar-camera-{index + 1:02d}", "type": "camera",
                 "start": round(start, 3), "end": round(end, 3), "camera_action": camera,
@@ -660,17 +806,16 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
                 "source_segment_index": annotation.get("source_segment_index"),
                 "grounded_in_text": True,
             })
+            last_camera_start = start
         symbol = None
         reason = None
         positive_degree = bool(annotation.get("suppress_semantic_symbol"))
         if role in {"NEGATIVE", "WARNING"} and not positive_degree and any(term in source_text for term in _NEGATIVE + _WARNING):
             symbol, reason = ("red_x", "明确否定或风险语义") if role == "NEGATIVE" else ("warning", "明确警告语义")
-        elif role in {"POSITIVE", "CONCLUSION"} and not positive_degree:
+        elif role == "CONCLUSION" and not positive_degree:
             symbol, reason = "green_check", "明确正向或结论语义"
         elif role == "QUESTION":
             symbol, reason = "question", "明确疑问语义"
-        elif role == "CTA":
-            symbol, reason = "arrow", "明确行动号召语义"
         # Strong numeric meaning may receive a few asymmetric burst lines.
         # This is punctuation bound to the transcript, not a number badge or
         # a generic decorative sun.
@@ -702,15 +847,23 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
                 "source_segment_index": annotation.get("source_segment_index"),
                 "grounded_in_text": True,
             })
-        if role in {
+        wants_text_emphasis = role in {
             "PRICE", "PERCENT", "NUMBER", "CONCLUSION", "CTA",
         } or (
             role in {"KEY_CLAIM", "STEP", "PROCESS", "PRODUCT", "LOCATION", "EXAMPLE"}
-            and importance >= 0.80
+            and importance >= 0.76
+        )
+        if (
+            wants_text_emphasis
+            and text_emphasis_count < 6
+            and start - last_text_emphasis_start >= 4.0
         ):
-            phrase = _short_text(
+            phrase_max_length = 10 if role in {"PRICE", "PERCENT", "NUMBER"} else 8
+            phrase = _complete_emphasis_phrase(
                 semantic_text,
-                max_length=10 if role in {"PRICE", "PERCENT", "NUMBER"} else 8,
+                source_text,
+                keyword_candidates,
+                max_length=phrase_max_length,
             )
             if 2 <= len(phrase) <= (10 if role in {"PRICE", "PERCENT", "NUMBER"} else 8):
                 events.append({
@@ -722,6 +875,8 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
                     "source_segment_index": annotation.get("source_segment_index"),
                     "grounded_in_text": True,
                 })
+                text_emphasis_count += 1
+                last_text_emphasis_start = start
     # Breathing rule: three consecutive high beats are reduced to keyword-only.
     ordered = sorted(events, key=lambda item: (float(item.get("start") or 0), item["event_id"]))
     streak = 0
@@ -737,8 +892,29 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
     return [event for event in ordered if not event.get("disabled_by_breathing_rule")]
 
 
-def build_grammar_only_timeline(segments: Sequence[Mapping[str, Any]], *, duration_seconds: float = 0.0) -> dict[str, Any]:
-    annotations = annotate_transcript_segments(segments, duration_seconds=duration_seconds)
+def build_grammar_only_timeline(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    duration_seconds: float = 0.0,
+    annotations: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    if annotations is None:
+        annotations = annotate_transcript_segments(
+            segments, duration_seconds=duration_seconds
+        )
+    else:
+        # Cached MiniMax output may refer to an earlier reviewed transcript or
+        # source clock. Revalidate it against the current segments and fill
+        # invalid/missing entries with the deterministic local annotator.
+        from src.services.semantic_director import reconcile_semantic_annotations
+
+        annotations = reconcile_semantic_annotations(
+            segments,
+            annotations,
+            fallback=lambda: annotate_transcript_segments(
+                segments, duration_seconds=duration_seconds
+            ),
+        )
     events = build_grammar_style_events(annotations)
     return {
         "mode": JY_CLONE_GRAMMAR_ONLY, "style_engine": "local-style-engine-v1",

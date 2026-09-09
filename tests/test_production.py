@@ -81,6 +81,28 @@ def test_profile_uses_universal_template_when_customer_does_not_choose(tmp_path)
     assert service.list_profiles()[0].edit_template_id == DEFAULT_PRODUCTION_TEMPLATE_ID
 
 
+def test_batch_persists_requested_style_preset_on_run_snapshot(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="风格传递测试")
+
+    batch = service.create_batch(
+        name="风格传递批次",
+        profile_id=profile.profile_id,
+        style_preset_id="talking-head-brand-emphasis-v1",
+        source_items=[{"source_type": "script", "source_value": "一段测试口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+
+    assert batch.execution_config["style_preset_id"] == (
+        "talking-head-brand-emphasis-v1"
+    )
+    assert run is not None
+    assert run.config["style_preset_id"] == "talking-head-brand-emphasis-v1"
+
+
 def test_sync_batch_does_not_rewrite_timestamp_when_state_is_unchanged(tmp_path):
     repository = MockRepository()
     candidate = _candidate("candidate-sync-noop")
@@ -1218,6 +1240,8 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
                             "run_id": run.run_id,
                             "approved_text": "确认后的真实转写",
                             "note": "改得更适合本地餐饮老板，保留原文事实",
+                            "skill_prompt": "语气像老板聊天；先讲结论，再给步骤。",
+                            "target_length": 150,
                         }
                     ],
                 },
@@ -1274,6 +1298,12 @@ def test_workspace_requires_transcript_then_script_review_for_candidate(tmp_path
     assert "改得更适合本地餐饮老板，保留原文事实" in copywriting.last_rewrite_kwargs[
         "rewrite_goal"
     ]
+    assert copywriting.last_rewrite_kwargs["skill_prompt"] == "语气像老板聊天；先讲结论，再给步骤。"
+    assert copywriting.last_rewrite_kwargs["target_length"] == 150
+    stored_after_transcript = repository.get_pipeline_run(run.run_id)
+    assert stored_after_transcript is not None
+    assert stored_after_transcript.config["rewrite_skill_prompt"] == "语气像老板聊天；先讲结论，再给步骤。"
+    assert stored_after_transcript.config["rewrite_target_length"] == 150
     assert script_workspace.status_code == 200, script_workspace.text
     assert script_workspace.json()["items"][0]["reviews"]["script"]["ai_audit"] == {
         "status": "completed",
@@ -1336,7 +1366,7 @@ def test_workspace_uses_public_media_url_and_reports_delayed_avatar_once(tmp_pat
 
     media_workspace = service.workspace(batch.batch_id)
     assert media_workspace["items"][0]["result_media_url"] == (
-        f"/api/v1/pipelines/{run.run_id}/media"
+        f"/api/v1/pipelines/{run.run_id}/media?v={edit_task.task_id}"
     )
     assert media_workspace["items"][0]["video_path"] == str(result_path)
 
@@ -2175,9 +2205,12 @@ def test_retry_reuses_successful_avatar_after_local_edit_failure(tmp_path):
                     "stage_retry_counts": {
                         "avatar_generation": 1,
                         "video_editing": 1,
+                        "video_editing_subtitle_alignment": 1,
                     },
                     "caption_timing_task_id": caption_task.task_id,
+                    "video_path": str(tmp_path / "stale.mp4"),
                 },
+                "edit_task_id": failed_edit.task_id,
             }
         )
     )
@@ -2191,11 +2224,90 @@ def test_retry_reuses_successful_avatar_after_local_edit_failure(tmp_path):
     assert resumed.status == PipelineRunStatus.RUNNING
     assert resumed.current_stage == PipelineStage.AVATAR_GENERATION
     assert resumed.avatar_task_id == avatar.task_id
+    assert resumed.edit_task_id is None
+    assert resumed.config.get("video_path") is None
+    assert resumed.config["local_edit_retry_pending"] is True
+    assert resumed.config["retry_source_edit_task_id"] == failed_edit.task_id
     assert resumed.config["stage_retry_counts"] == {
         "avatar_generation": 1,
         "video_editing": 1,
         "video_editing_subtitle_alignment": 1,
+        "video_editing_recovery_v2": 1,
     }
+    assert retried.items[0].video_path is None
+
+
+def test_retry_blocked_legacy_local_edit_uses_new_recovery_generation(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="旧本地剪辑恢复配方")
+    batch = service.create_batch(
+        name="旧本地剪辑恢复批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "确认后的口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+    assert run is not None
+    now = datetime.now().astimezone()
+    avatar = AvatarTask(
+        task_id="avatar-legacy-local-edit",
+        title="已成功数字人",
+        status=TaskStatus.SUCCEEDED,
+        progress=100,
+        created_at=now,
+        updated_at=now,
+        script_text="确认后的口播稿",
+        avatar_id="avatar-a",
+        avatar_name="形象",
+        voice_id="voice-a",
+        voice_name="音色",
+        rights_holder="测试公司",
+        rights_confirmed_at=now,
+        idempotency_key=f"worker-avatar-{run.run_id}",
+        provider_name="shuying_legacy_cloud",
+        result_path=str(tmp_path / "avatar.mp4"),
+    )
+    repository.save_task(avatar)
+    repository.save_pipeline_run(
+        run.model_copy(
+            update={
+                "status": PipelineRunStatus.FAILED,
+                "current_stage": PipelineStage.VIDEO_EDITING,
+                "avatar_task_id": avatar.task_id,
+                "edit_task_id": "edit-stale",
+                "error_message": "旧时间线包含禁止的外部视觉",
+                "config": {
+                    **run.config,
+                    "video_path": str(tmp_path / "stale.mp4"),
+                    "stage_retry_counts": {
+                        "avatar_generation": 1,
+                        "video_editing": 1,
+                        "video_editing_subtitle_alignment": 1,
+                    },
+                },
+            }
+        )
+    )
+    blocked = batch.items[0].model_copy(
+        update={
+            "status": ProductionBatchItemStatus.BLOCKED,
+            "video_path": str(tmp_path / "stale.mp4"),
+            "blocked_reasons": ["该阶段已安全重试过一次"],
+        }
+    )
+    repository.save_production_batch(batch.model_copy(update={"items": [blocked]}))
+
+    retried = service.retry_failed(batch.batch_id, pipeline_service=pipeline_service)
+
+    assert retried.items[0].status == ProductionBatchItemStatus.QUEUED
+    assert retried.items[0].video_path is None
+    resumed = repository.get_pipeline_run(run.run_id)
+    assert resumed is not None
+    assert resumed.status == PipelineRunStatus.RUNNING
+    assert resumed.edit_task_id is None
+    assert resumed.config["stage_retry_counts"]["video_editing_recovery_v2"] == 1
 
 
 def test_retry_resumes_avatar_pause_before_supplier_submission(tmp_path):
