@@ -48,15 +48,8 @@
     "0.2.8",
     "0.2.9"
   ],
-  "current_candidate": null,
-  "release_in_progress": {
-    "version": "0.2.46",
-    "source_commit": "1b5e749245504554cb881b8525fcdee49bfb1e98",
-    "server_state": "ready",
-    "control_plane_sha256": "fb88cd132093712f1627e801a38f96daf3215120f5fc43f285ccdfc0eb1a0d7e",
-    "windows_state": "pending",
-    "installer_sha256": null
-  },
+  "current_candidate": "0.2.47",
+  "release_in_progress": null,
   "completed_releases": [
     {
       "version": "0.2.23",
@@ -188,6 +181,17 @@
       "superseded_by": "0.2.43",
       "reason": "0.2.42 仅完成控制层部署，Windows 客户端未完成；由包含完整源码改动的 0.2.43 替代。",
       "superseded_at": "2026-08-29T17:49:07+08:00"
+    },
+    {
+      "version": "0.2.46",
+      "source_commit": "1b5e749245504554cb881b8525fcdee49bfb1e98",
+      "server_state": "ready",
+      "control_plane_sha256": "fb88cd132093712f1627e801a38f96daf3215120f5fc43f285ccdfc0eb1a0d7e",
+      "windows_state": "pending",
+      "installer_sha256": null,
+      "superseded_by": "0.2.47",
+      "reason": "0.2.46 控制层已准备但 Windows 客户端未完成；当前源码改动改由 0.2.47 统一发布。",
+      "superseded_at": "2026-09-10T00:26:29+08:00"
     }
   ]
 }
