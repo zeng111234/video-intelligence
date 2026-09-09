@@ -120,7 +120,12 @@ test("manifest and installer stay on the trusted update path", async () => {
     assert.equal(progress.at(-1).percent, 100);
     assert.equal(progress.at(-1).downloadedBytes, content.length);
   } finally {
-    await fs.rm(temporaryRoot, { recursive: true, force: true });
+    await fs.rm(temporaryRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 });
 
@@ -150,6 +155,11 @@ test("download rejects a file that does not match the published digest", async (
     );
     await assert.rejects(fs.access(destination));
   } finally {
-    await fs.rm(temporaryRoot, { recursive: true, force: true });
+    await fs.rm(temporaryRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 });
