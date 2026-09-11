@@ -774,6 +774,19 @@ class CrawlerBatchResponse(BaseModel):
     copy_probe_recheckable_count: int = 0
     copy_queries_executed: int = 0
     copy_matrix_exhausted: bool = False
+    # 顺序采集的排队态（0.2.52）。
+    #
+    # 同一平台同一时间只允许一次真实采集。此前第二个任务拿不到租约时会立刻
+    # 生成一条 failed 批次，文案是"抖音正在顺序采集，请等待结束。"——用户看到
+    # 的是"抓取失败"，还会以为要反复点击重试。
+    #
+    # 现在改为 waiting：不建失败批次，把正在跑的任务、预计可重试时间和剩余
+    # 秒数一并返回，前端据此显示"上一项正在抓取，完成后自动继续"。
+    waiting: bool = False
+    waiting_reason: str | None = None
+    waiting_platforms: list[str] = Field(default_factory=list)
+    waiting_remaining_seconds: int = 0
+    waiting_retry_at: datetime | None = None
 
 
 class CrawlerTrackingResponse(BaseModel):
@@ -2431,6 +2444,8 @@ def _execute_free_multi_platform_batch(
     requested_count = _free_requested_count(body)
     batches: list[SearchBatch] = []
     errors: list[str] = []
+    # 被"同平台正在顺序采集"挡住的任务记在这里，不当作失败。
+    waits: list[dict[str, Any]] = []
     browser_statuses: dict[Platform, Any] = {}
     browser_sources = (
         (Platform.DOUYIN, douyin_public_service),
@@ -2565,7 +2580,27 @@ def _execute_free_multi_platform_batch(
                 datetime.now().astimezone(),
             )
             if lease_id is None:
-                errors.append(_browser_safety_status(platform, repo).message)
+                # 拿不到租约有两种完全不同的原因，必须区分：
+                #   * state == "running"：同平台另一次真实采集正在跑。这是正常的
+                #     排队，不是失败——记入 waits，不建失败批次，让前端显示等待。
+                #   * 其余（冷却/风控暂停/次数上限）：记为 errors，照旧提示。
+                blocked = _browser_safety_status(platform, repo)
+                if blocked.state == "running":
+                    waits.append(
+                        {
+                            "platform": platform.value,
+                            "message": blocked.message,
+                            "remaining_seconds": blocked.cooldown_remaining_seconds,
+                            "retry_at": blocked.next_available_at,
+                        }
+                    )
+                    report_progress(
+                        "waiting",
+                        f"{_platform_label(platform.value)}上一项正在抓取，完成后自动继续。",
+                        platform=platform.value,
+                    )
+                else:
+                    errors.append(blocked.message)
                 return None
         batch: SearchBatch | None = None
         # 采集期间每 30 秒续租，避免长采集被 90 秒租约自己过期打断。
@@ -2692,6 +2727,39 @@ def _execute_free_multi_platform_batch(
 
     persisted = [batch for batch in batches if repo.get_search_batch(batch.batch_id)]
     if not persisted:
+        # 只因"同平台正在顺序采集"而没有产出时，这不是失败：不建 failed 批次，
+        # 而是如实返回排队状态。租约释放后用户再点一次即可继续，页面上也不会
+        # 出现一条误导性的"抓取失败"。
+        if waits and not errors:
+            retry_times = [
+                item["retry_at"] for item in waits if item.get("retry_at")
+            ]
+            return CrawlerBatchResponse(
+                batch_id=f"waiting-{uuid4().hex[:12]}",
+                keyword=body.keyword.strip(),
+                platforms=[item["platform"] for item in waits],
+                published_window_days=body.published_window_days,
+                hotspot_window_hours=None,
+                count_per_platform=requested_count,
+                kuaishou_sort=body.kuaishou_sort,
+                kuaishou_duration_bucket=body.kuaishou_duration_bucket,
+                provider="free_multi_platform",
+                mode=ProviderMode.LOCAL_BROWSER.value,
+                # 刻意不用 FAILED：这是一次尚未开始的排队，不是一个失败结果。
+                status=SearchBatchStatus.PENDING.value,
+                force_refresh=body.force_refresh,
+                created_at=datetime.now().astimezone(),
+                error=None,
+                free_candidate_count=0,
+                paid_fallback_blocked_reason="上一项抓取完成后自动继续。",
+                waiting=True,
+                waiting_reason="；".join(item["message"] for item in waits),
+                waiting_platforms=[item["platform"] for item in waits],
+                waiting_remaining_seconds=max(
+                    (item["remaining_seconds"] for item in waits), default=0
+                ),
+                waiting_retry_at=min(retry_times) if retry_times else None,
+            )
         failed = SearchBatch(
             keyword=body.keyword.strip(),
             published_window_days=body.published_window_days,

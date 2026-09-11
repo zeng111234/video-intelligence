@@ -1683,6 +1683,61 @@ class TestCrawlerBatches:
         assert len(start_calls) == first_start_count
         assert cached.json()["platform_runs"][0]["cache_hit"] is True
 
+    def test_sequential_collection_returns_waiting_instead_of_a_failed_batch(
+        self, client: TestClient, crawler_sandbox
+    ):
+        """同平台正在顺序采集时应返回等待，而不是造一条 failed 批次。
+
+        此前第二个任务拿不到租约就会立刻生成 failed 批次，文案是
+        "抖音正在顺序采集，请等待结束。"，用户看到的是"抓取失败"。
+        """
+        del crawler_sandbox
+        from datetime import datetime, timedelta
+
+        repository = backend_deps.get_repository()
+        provider = crawler_api._browser_provider_key(Platform.DOUYIN)
+        now = datetime.now().astimezone()
+        assert repository.claim_provider_safety_lease(
+            provider=provider,
+            run_id="running-run",
+            now=now,
+            lease_seconds=90,
+            backend_instance_id="backend-alive",
+        )
+        before = len(repository.list_search_batches(limit=100))
+
+        previous = app.dependency_overrides.get(backend_deps.get_repository)
+        app.dependency_overrides[backend_deps.get_repository] = lambda: repository
+        try:
+            resp = client.post(
+                "/api/v1/crawler/batches",
+                json={
+                    "keyword": "顺序采集等待",
+                    "platforms": ["douyin"],
+                    "count_per_platform": 30,
+                    "published_window_days": 180,
+                    "force_refresh": True,
+                },
+            )
+        finally:
+            if previous is None:
+                app.dependency_overrides.pop(backend_deps.get_repository, None)
+            else:
+                app.dependency_overrides[backend_deps.get_repository] = previous
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # 关键：是等待，不是失败。
+        assert data["waiting"] is True
+        assert data["status"] == "pending"
+        assert data["error"] is None
+        assert data["waiting_platforms"] == ["douyin"]
+        assert data["waiting_remaining_seconds"] > 0
+        assert data["waiting_retry_at"] is not None
+        assert "顺序采集" in (data["waiting_reason"] or "")
+        # 不得新增任何批次——尤其是不能新增 failed 批次。
+        assert len(repository.list_search_batches(limit=100)) == before
+
     def test_hotwords_endpoint_returns_cached_suggestions(self, client: TestClient):
         now = __import__("datetime").datetime.now().astimezone()
 
