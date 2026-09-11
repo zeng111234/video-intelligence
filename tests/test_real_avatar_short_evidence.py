@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import scripts.render_real_avatar_short_evidence as evidence
 from scripts.accept_real_avatar_short import build_review_segments
 from src.services.video_editor_cloud import build_business_talking_head_overlay_preview
+
+
+_OPTIONAL_ASR_EVIDENCE = (
+    Path(__file__).resolve().parents[1]
+    / "work/auto-fine-cut-adaptive-20260824-short-real/asr-full.json"
+)
 
 
 def test_rendered_ass_does_not_add_a_leading_comma_to_subtitle_text(
@@ -28,6 +36,10 @@ def test_rendered_ass_does_not_add_a_leading_comma_to_subtitle_text(
     assert ",Default,,0,0,0,,{\\fad(120,0)}" not in dialogue
 
 
+@pytest.mark.skipif(
+    not _OPTIONAL_ASR_EVIDENCE.is_file(),
+    reason="requires optional historical work/ ASR evidence excluded from handoff",
+)
 def test_source_range_uses_reviewed_spoken_ranges_without_tail_fragment():
     segments = build_review_segments()
     playback_rate = 1.15

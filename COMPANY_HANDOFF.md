@@ -870,12 +870,14 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 - 前端 `http://127.0.0.1:1001` 返回 200；
 - 前端 23 个测试文件、204 个测试通过；
 - `npx tsc --noEmit` 和 `npm run build` 通过。
+- 在同一干净副本生成了 Windows x64 安装包；安装包内含 Electron、打包后的 FastAPI 后端及 FFmpeg/FFprobe，不要求接收方另外安装 Python/Node/FFmpeg 才能启动客户端；
+- 直接启动解包版 EXE 后，本地 `/health` 返回 200，且 `control_plane_enabled=true`，已绑定公司控制层地址 `https://xmt.syszr.cn`。
 
 这证明“当前工作区复制成干净源码后，在一台具备网络和基础运行时的 Windows 电脑上可以自举启动”。这不等于已经证明公司的具体电脑、网络、杀毒软件策略和供应商账号一定没有环境差异。
 
-### 21.2 当前仍未通过的项目
+### 21.2 当前验证结果与剩余门槛
 
-补装 `requirements-dev.txt` 后运行全量 Python 测试时，仍有少量历史验收项依赖 `work/` 下的阶段性证据目录，另有旧版 Streamlit 页面和字幕强调断言需要维护者确认；这些不是 React/FastAPI 常规启动依赖，但不能把全量 Python 历史测试写成全绿。二开验收应区分：
+补装 `requirements-dev.txt` 后，当前交付分支全量 Python 测试通过；少量依赖 `work/` 阶段性证据目录的历史测试在证据不存在时按明确原因跳过。前端测试、TypeScript、Vite 构建和桌面后端启动也已通过。测试输出仍可能出现第三方依赖的弃用警告，不是启动失败。二开验收应区分：
 
 - 运行门：先执行 `start.bat`、页面和 `/health` 检查；
 - 常规代码门：执行后端目标模块测试和前端 204 个测试；
@@ -886,7 +888,9 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 
 `源码首次安装和前后端启动：PASS（已在干净副本验证）`；
 
-`全量 Python 历史验收：FAIL（7 项失败，不能宣称全绿）`；
+`全量 Python 测试：PASS（可选历史 work/证据缺失时按规则跳过）`；
+
+`正式视频剪辑 quote → user_confirm → generation → export → 页面播放 → 下载：PENDING（尚未在公司账号和公司电脑完成）`；
 
 `公司实际电脑验收：PENDING（尚未在客户电脑完成）`。
 
@@ -908,3 +912,16 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 - [ ] 本地视频样例能被 FFmpeg/FFprobe 读取；
 - [ ] 若使用公司控制层，HTTPS 地址、公司账号和公司供应商配置已单独确认；
 - [ ] 记录验收结果、日志路径、最终 ZIP/EXE SHA256 和负责人。
+
+### 21.5 当前 Windows 安装包
+
+本次已生成可直接交给公司的 Windows x64 安装包：
+
+- 文件：`交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe`；
+- SHA256：`765279b79d4581b9e36abb4f38162ad65908fb78461edc3f9d9e2e0a0b0ea725`；
+- 构建版本：`0.2.49-company-handoff`；
+- 控制层地址：`https://xmt.syszr.cn`；
+- 交付包不含永久供应商密钥、密码、Token、个人 `.env` 或 SSH 私钥；
+- 安装包只负责读取公司已配置的控制层/系统环境，密钥仍由公司密钥管理系统保管。
+
+双击安装包可以验证“客户端能否启动”；登录、激活码、云端供应商调用和正式剪辑链路仍必须在公司提供的账号、网络和权限下做一次业务验收，不能用本机健康检查替代。

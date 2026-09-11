@@ -107,23 +107,19 @@ def test_pages_render_without_exceptions(path: Path, expected_title: str) -> Non
     assert any(expected_title in title.value for title in app.title)
 
 
-def test_candidate_page_shows_three_platform_entry_and_platform_history() -> None:
+def test_candidate_page_shows_three_platform_entry_without_fabricating_candidates() -> None:
     app = AppTest.from_file(str(ROOT / "app_pages" / "candidates.py"))
     app.secrets["VIDEO_LICENSED_PROVIDER_MODE"] = "sandbox"
     app.run(timeout=15)
 
     assert not app.exception
-    candidate_frame = next(
-        frame
-        for frame in app.dataframe
-        if "平台" in frame.value.columns
+    # 交付包是空白环境；没有已确认的搜索批次时，不应凭空补造候选表。
+    assert not any(
+        "平台" in frame.value.columns
         and "标题" in frame.value.columns
         and "selection_mode: SINGLE_ROW" in str(frame.proto)
+        for frame in app.dataframe
     )
-    rows = candidate_frame.value
-    assert not rows.empty
-    assert "平台" in rows.columns
-    assert "selection_mode: SINGLE_ROW" in str(candidate_frame.proto)
     assert any(item.label == "历史平台" for item in app.multiselect)
     visible_text = " ".join(
         [item.value for item in app.markdown]

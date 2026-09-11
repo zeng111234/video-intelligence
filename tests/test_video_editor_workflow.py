@@ -37,6 +37,12 @@ from src.services.video_editor_workflow import (
 )
 
 
+_OPTIONAL_ASR_EVIDENCE = (
+    Path(__file__).resolve().parents[1]
+    / "work/auto-fine-cut-adaptive-20260824-short-real/asr-full.json"
+)
+
+
 def test_visual_gate_policy_is_template_adaptive() -> None:
     business = workflow_module._visual_gate_policy_for_template(
         "pain_point_solution"
@@ -3849,6 +3855,10 @@ def test_full_review_transcript_corrects_homophones_without_changing_word_clock(
     )
 
 
+@pytest.mark.skipif(
+    not _OPTIONAL_ASR_EVIDENCE.is_file(),
+    reason="requires optional historical work/ ASR evidence excluded from handoff",
+)
 def test_full_transcript_builds_grounded_visual_intents_across_late_timeline():
     asr = json.loads(
         Path("work/auto-fine-cut-adaptive-20260824-short-real/asr-full.json").read_text(

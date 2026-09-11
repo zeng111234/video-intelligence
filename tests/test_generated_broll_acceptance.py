@@ -1,6 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from scripts.render_generated_broll_acceptance import _attach_real_word_timestamps
+
+
+_OPTIONAL_ASR_EVIDENCE = (
+    Path(__file__).resolve().parents[1]
+    / "work/auto-fine-cut-v1-20260822/asr/assembled-word-timestamps-large-v3-turbo.json"
+)
 
 
 def _words(text: str, start: float) -> list[dict[str, object]]:
@@ -12,6 +22,10 @@ def _words(text: str, start: float) -> list[dict[str, object]]:
     return result
 
 
+@pytest.mark.skipif(
+    not _OPTIONAL_ASR_EVIDENCE.is_file(),
+    reason="requires optional historical work/ ASR evidence excluded from handoff",
+)
 def test_local_word_timestamp_mapping_records_asr_text_normalization():
     reviewed = [
         {"start": 0, "end": 1, "text": "你公司的客户资源"},

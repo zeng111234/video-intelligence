@@ -944,7 +944,8 @@ def test_overlay_preview_automatically_marks_numeric_and_benefit_terms():
         "style_id": "adaptive_talking_head_v1",
     }
     assert preview["cues"][0]["emphasis_range"] is not None
-    assert all(cue["emphasis_range"] is None for cue in preview["cues"][1:])
+    assert preview["cues"][1]["emphasis_style"]["color"] == "#FFB86B"
+    assert preview["cues"][1]["emphasis_range"] is not None
 
 
 def test_parallel_promotions_each_get_emphasis_and_use_asr_sentence_clock():

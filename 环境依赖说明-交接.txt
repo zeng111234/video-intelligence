@@ -234,6 +234,13 @@ Python 测试和静态检查：
 九、Windows EXE 打包环境
 ------------------------
 
+本次已提供一个可直接安装的 Windows x64 客户端：
+- 文件：交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe。
+- SHA256：765279b79d4581b9e36abb4f38162ad65908fb78461edc3f9d9e2e0a0b0ea725。
+- 该安装包已包含 Electron、Python 后端运行时、FFmpeg 和 FFprobe；接收方运行已生成的安装包时，不需要另外安装 Python、Node.js 或 FFmpeg。
+- 该安装包绑定控制层地址 https://xmt.syszr.cn，但不包含永久供应商密钥、密码、Token 或 SSH 私钥。公司凭据仍从公司控制层/公司密钥管理系统提供。
+- 本机已验证解包版启动后 /health 返回 200 且 control_plane_enabled=true；正式登录、激活码、供应商调用和剪辑业务仍须在公司电脑上验收。
+
 重新打包除了源码开发依赖，还需要：
 1. Python 3.12+ 和根目录 .venv。
 2. requirements-build.txt 中的 PyInstaller 6.15.0。
@@ -244,7 +251,11 @@ Python 测试和静态检查：
 
 推荐构建前先通过检查，再执行：
 
-    .\scripts\build_windows_installer.ps1 -Version <new-version>
+    .\scripts\build_windows_installer.ps1 -Version <new-version> -ControlPlaneUrl https://<company-control-plane-domain>
+
+当前公司地址的示例命令为：
+
+    .\scripts\build_windows_installer.ps1 -Version <new-version> -ControlPlaneUrl https://xmt.syszr.cn
 
 构建脚本会执行前端类型检查、前端测试、桌面更新测试、Python 发布测试、Vite 构建、PyInstaller 打包和 electron-builder 安装包构建。
 
