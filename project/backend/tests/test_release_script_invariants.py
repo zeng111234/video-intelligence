@@ -3280,7 +3280,8 @@ def test_installer_waits_for_ports_and_clears_stale_runtime_state():
     ).read_text(encoding="utf-8-sig")
 
     assert "Wait-LocalPortReleased" in script_text
-    assert "Get-NetTCPConnection -LocalPort" in script_text
+    assert "Get-NetTCPConnection" in script_text
+    assert "-LocalPort $port" in script_text
     assert "Remove-StaleDesktopRuntimeState" in script_text
 
 
@@ -3298,3 +3299,71 @@ def test_verifier_proves_the_runtime_record_belongs_to_this_install():
         REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
     ).read_text(encoding="utf-8-sig")
     assert "-InstalledAfterUtc $desktopStartedAtUtc" in installer_text
+
+
+def test_installer_ignores_ports_owned_by_other_programs():
+    """源码开发服务就用 1001/2001；盲等会把它误判成旧 EXE 残留。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "function Get-OwnedListener" in script_text
+    assert "Test-ProcessPathWithinInstallRoot" in script_text
+    # 等待逻辑必须以"监听进程属于本安装目录"为准，而不是端口本身。
+    wait_body = script_text[
+        script_text.index("function Wait-LocalPortReleased") :
+        script_text.index("function Remove-StaleDesktopRuntimeState")
+    ]
+    assert "Get-OwnedListener" in wait_body
+    assert "[string]$ExpectedInstallRoot" in wait_body
+
+
+def test_installer_matches_quoted_user_data_dir_arguments():
+    """Chrome 对含空格的路径会加引号，子串匹配会漏掉这种最常见的形式。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "function Get-UserDataDirFromCommandLine" in script_text
+    # 必须同时接受带引号与不带引号两种写法。
+    assert "--user-data-dir=" in script_text
+    assert "regex" in script_text.lower()
+
+
+def test_verifier_waits_long_enough_for_a_clean_first_start():
+    """干净电脑首次启动要几十秒；只等 5 秒会误报"后端未就绪"+登录页 404。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "verify_windows_install.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "healthDeadline" in script_text
+    assert "AddSeconds(90)" in script_text
+    # 不能退回"探一次 + 固定睡 5 秒"的老写法。
+    assert "Start-Sleep -Seconds 5\n    $health = Get-LocalHealth" not in script_text
+
+
+def test_lifespan_reclaims_browsers_before_resuming_queues():
+    """恢复队列会立刻拉起 worker；孤儿浏览器还占着 profile 锁就会当场撞上。"""
+    main_text = (
+        REPOSITORY_ROOT / "project" / "backend" / "app" / "main.py"
+    ).read_text(encoding="utf-8")
+
+    reclaim_index = main_text.index("for note in reclaim_orphan_browsers():")
+    recover_index = main_text.index(
+        "recovery = recover_interrupted_crawler_queues(get_repository())"
+    )
+    assert reclaim_index < recover_index, "回收孤儿浏览器必须早于恢复抓取队列"
+
+
+def test_health_counts_crawler_queues_not_only_tasks():
+    """批量找素材不在 tasks 表里；漏算会让安装器以为没任务在跑。"""
+    main_text = (
+        REPOSITORY_ROOT / "project" / "backend" / "app" / "main.py"
+    ).read_text(encoding="utf-8")
+
+    body = main_text[
+        main_text.index("def _active_task_counts()") :
+        main_text.index('@app.get("/health")')
+    ]
+    assert "list_crawler_keyword_queues" in body
+    assert 'by_kind["crawler"]' in body

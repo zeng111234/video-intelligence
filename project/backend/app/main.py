@@ -179,6 +179,14 @@ async def lifespan(application: FastAPI):
         )
         from project.backend.app.core.repository import get_repository
 
+        # 顺序很重要：必须先回收孤儿浏览器，再恢复队列。
+        #
+        # 恢复队列会立刻把 worker 拉起来；如果上一次崩溃留下的 Chrome 还占着
+        # profile 锁，恢复起来的任务会马上撞上这把锁，表现为"页面打不开"，
+        # 而且这一步通常发生在用户还没反应过来的时候。
+        for note in reclaim_orphan_browsers():
+            logger.info("孤儿浏览器回收：%s", note)
+
         recovery = recover_interrupted_crawler_queues(get_repository())
         if recovery.get("reaped_providers"):
             logger.info(
@@ -191,8 +199,6 @@ async def lifespan(application: FastAPI):
                 "抓取队列自动恢复次数已用尽，已标记失败：%s",
                 "、".join(recovery["exhausted"]),
             )
-        for note in reclaim_orphan_browsers():
-            logger.info("孤儿浏览器回收：%s", note)
     except Exception as exc:
         logger.warning("抓取队列与浏览器恢复失败（不影响启动）: %s", exc)
     try:
@@ -502,7 +508,8 @@ def _active_task_counts() -> dict[str, Any]:
     try:
         from project.backend.app.core.repository import get_repository
 
-        for task in get_repository().list_tasks():
+        repository = get_repository()
+        for task in repository.list_tasks():
             status = str(getattr(task.status, "value", task.status) or "")
             if status not in _ACTIVE_TASK_STATUSES:
                 continue
@@ -510,6 +517,30 @@ def _active_task_counts() -> dict[str, Any]:
             kind = str(getattr(task.kind, "value", task.kind) or "unknown")
             by_kind[kind] = by_kind.get(kind, 0) + 1
             by_status[status] = by_status.get(status, 0) + 1
+
+        # 批量找素材（爬虫队列）不在 tasks 表里，必须单独统计。
+        #
+        # 否则"正在顺序采集"这种最容易被升级打断、也最贵的操作会被漏掉，
+        # 安装器以为没有任务在跑，直接把浏览器和进程掐掉。
+        try:
+            for queue in repository.list_crawler_keyword_queues(50):
+                queue_status = str(
+                    getattr(queue.status, "value", queue.status) or ""
+                )
+                if queue_status not in _ACTIVE_TASK_STATUSES:
+                    continue
+                active_items = [
+                    item
+                    for item in queue.items
+                    if str(getattr(item.status, "value", item.status) or "")
+                    in _ACTIVE_TASK_STATUSES
+                ]
+                count = len(active_items) or 1
+                total += count
+                by_kind["crawler"] = by_kind.get("crawler", 0) + count
+                by_status[queue_status] = by_status.get(queue_status, 0) + 1
+        except Exception as exc:  # noqa: BLE001 - 队列统计失败不影响任务统计
+            logger.warning("统计爬虫队列失败：%s", exc)
     except Exception as exc:  # noqa: BLE001 - 统计失败不能影响健康检查
         logger.warning("统计进行中任务失败：%s", exc)
         return {"active_task_count": 0, "by_kind": {}, "by_status": {}, "error": True}

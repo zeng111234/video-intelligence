@@ -397,19 +397,45 @@ if ($desktopShortcutSafe) {
 }
 Add-Check -Name "Shortcut target" -Passed ($shortcutTarget -eq $installedExe) -Evidence $shortcutTarget
 
-$health = Get-LocalHealth
-$healthValid = $health -and `
-    $health.status -eq "ok" -and `
-    $health.service -eq "videoinsight-desktop-api" -and `
-    $health.desktop_protocol -eq "2"
-if (-not $healthValid) {
-    # 新电脑首次启动可能较慢，只自动重试一次。
-    Start-Sleep -Seconds 5
+# 等待后端就绪（0.2.52）。
+#
+# 历史缺陷：这里只探一次，失败后固定睡 5 秒再探一次就结论"不健康"。干净电脑
+# 首次启动要解压、建库、拉起 Playwright，几十秒是正常的；桌面端自己都愿意等
+# 90 秒（main.cjs 的 waitForBackend）。验收窗口比客户端还短，就会在机器慢的
+# 时候误报"后端未就绪"，紧接着 /login 探活也会 404——正是之前那两次升级失败
+# 的形态。
+#
+# 现在改成有界轮询：最多等 90 秒，一旦就绪立刻返回。
+#
+# 但也不能无条件等满：如果根本没有任何 VideoInsight 进程在跑，说明程序压根没
+# 起来（或已经被关掉），再等 90 秒只是让用户干瞪眼——独立运行验收脚本时尤其
+# 明显。给 15 秒宽限期让安装器刚启动的进程出现，之后仍无进程就直接判失败。
+$health = $null
+$healthValid = $false
+$healthDeadline = (Get-Date).AddSeconds(90)
+$healthStartedAt = Get-Date
+while ((Get-Date) -lt $healthDeadline) {
     $health = Get-LocalHealth
-    $healthValid = $health -and `
-        $health.status -eq "ok" -and `
-        $health.service -eq "videoinsight-desktop-api" -and `
+    if (
+        $health -and
+        $health.status -eq "ok" -and
+        $health.service -eq "videoinsight-desktop-api" -and
         $health.desktop_protocol -eq "2"
+    ) {
+        $healthValid = $true
+        break
+    }
+    if ((Get-Date) - $healthStartedAt -gt [TimeSpan]::FromSeconds(15)) {
+        $anyProcess = @(
+            Get-Process `
+                -Name VideoInsight, VideoInsightBackend `
+                -ErrorAction SilentlyContinue
+        )
+        if ($anyProcess.Count -eq 0) {
+            break
+        }
+    }
+    Start-Sleep -Milliseconds 750
 }
 Add-Check `
     -Name "Local service health" `

@@ -281,6 +281,21 @@ async function checkForUpdate() {
 }
 
 let backendRestartAttempted = false;
+// 后端故障只允许弹一次框。
+//
+// 历史缺陷：重启失败会弹"本地服务已停止"，而重启起来的后端如果再退出，exit
+// 处理器会再弹一次；同时 boot() 里的 waitForBackend 可能要等满 90 秒才超时，
+// 又弹出"启动失败"。用户会连着看到两个框，而且第二个要等一分半才出现。
+let backendFailureReported = false;
+// 后端已确认无法恢复：让 waitForBackend 立刻失败，不再干等 90 秒。
+let backendUnrecoverable = false;
+
+function reportBackendFailure(title, detail) {
+  if (backendFailureReported) return;
+  backendFailureReported = true;
+  appendDesktopLog("ERROR", "electron.backend", `failure_reported ${title}`);
+  dialog.showErrorBox(title, detail);
+}
 
 function startBackend(port) {
   const executable = backendExecutable();
@@ -338,7 +353,8 @@ function startBackend(port) {
           appendBackendLifecycle("backend_restart_failed", {
             message: String(error?.message || error),
           });
-          dialog.showErrorBox(
+          backendUnrecoverable = true;
+          reportBackendFailure(
             "VideoInsight 本地服务已停止",
             "自动重启失败。请重新启动应用；如果仍然失败，请把本机 VideoInsight 数据目录中的 desktop.log 发给技术人员。",
           );
@@ -348,7 +364,8 @@ function startBackend(port) {
     }
     // 重试后仍然失败：只显示一个错误框。
     appendBackendLifecycle("backend_unrecoverable", { pid: backendPid, port });
-    dialog.showErrorBox(
+    backendUnrecoverable = true;
+    reportBackendFailure(
       "VideoInsight 本地服务已停止",
       "请重新启动应用；如果仍然失败，请把本机 VideoInsight 数据目录中的 desktop.log 发给技术人员。",
     );
@@ -358,6 +375,10 @@ function startBackend(port) {
 async function waitForBackend(healthUrl, timeoutMs = 90000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    // 后端已经确认恢复不了：立刻失败，不要干等到超时再弹第二个框。
+    if (backendUnrecoverable) {
+      throw new Error("本地服务已停止");
+    }
     try {
       const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1000) });
       if (response.ok) return;
@@ -435,7 +456,12 @@ function handleBootFailure(error) {
     "electron.boot",
     String(error?.stack || error?.message || error),
   );
-  dialog.showErrorBox(
+  // 后端故障已经报过一次就不再弹第二个框——用户不需要看两遍同一件事。
+  if (backendFailureReported) {
+    app.quit();
+    return;
+  }
+  reportBackendFailure(
     "VideoInsight 启动失败",
     `${error?.message || error}\n\n请查看本机 VideoInsight 数据目录中的 desktop.log。`,
   );

@@ -367,9 +367,50 @@ function Get-RecordedDesktopPort {
     return 0
 }
 
+function Get-OwnedListener {
+    param(
+        [Parameter(Mandatory = $true)][int[]]$Ports,
+        [Parameter(Mandatory = $true)][string]$ExpectedInstallRoot
+    )
+
+    # 只返回"监听进程的可执行文件位于本安装目录内"的监听项。
+    # 端口被别人（源码开发服务、其他程序）占用时不算数，也不该阻断升级。
+    $owned = @()
+    foreach ($port in $Ports) {
+        $connections = @(
+            Get-NetTCPConnection `
+                -LocalPort $port `
+                -State Listen `
+                -ErrorAction SilentlyContinue
+        )
+        foreach ($connection in $connections) {
+            $ownerId = [int]$connection.OwningProcess
+            if ($ownerId -le 0) {
+                continue
+            }
+            $ownerProcess = Get-Process -Id $ownerId -ErrorAction SilentlyContinue
+            if (-not $ownerProcess) {
+                continue
+            }
+            $ownerPath = ""
+            try { $ownerPath = [string]$ownerProcess.Path } catch { $ownerPath = "" }
+            if (
+                -not [string]::IsNullOrWhiteSpace($ownerPath) -and
+                (Test-ProcessPathWithinInstallRoot `
+                    -ProcessPath $ownerPath `
+                    -ExpectedInstallRoot $ExpectedInstallRoot)
+            ) {
+                $owned += $connection
+            }
+        }
+    }
+    return $owned
+}
+
 function Wait-LocalPortReleased {
     param(
         [Parameter(Mandatory = $true)][string]$RuntimeRootPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedInstallRoot,
         [int[]]$CandidatePorts = @(),
         [int]$TimeoutSeconds = 30
     )
@@ -377,40 +418,40 @@ function Wait-LocalPortReleased {
     # 只等进程退出是不够的：Windows 上端口可能还被占用一小段时间，此时新版本
     # 会挑到另一个端口，验收脚本却按旧端口去探活，于是误报"登录页 404"——
     # 0.2.51 的三次升级失败正是这种形态。这里必须确认端口真的释放了。
+    #
+    # 但不能无条件等 1001/2001：源码开发服务（scripts/start_all_services.ps1）
+    # 用的就是这两个端口，盲等会把"开发服务器还在跑"误判成"旧 EXE 没退"，
+    # 等满 30 秒后直接让升级失败。因此只等**确实属于本安装目录**的监听进程。
     $ports = @()
     $recorded = Get-RecordedDesktopPort -RuntimeRootPath $RuntimeRootPath
     if ($recorded -gt 0) {
         $ports += $recorded
     }
     $ports += $CandidatePorts
-    $ports = @($ports | Where-Object { $_ -ge 1024 -and $_ -le 65535 } | Select-Object -Unique)
+    $ports = @(
+        $ports | Where-Object { $_ -ge 1024 -and $_ -le 65535 } | Select-Object -Unique
+    )
     if ($ports.Count -eq 0) {
         return
     }
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $listening = @()
-        foreach ($port in $ports) {
-            $listening += @(
-                Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-            )
-        }
-        if ($listening.Count -eq 0) {
+        $owned = @(
+            Get-OwnedListener -Ports $ports -ExpectedInstallRoot $ExpectedInstallRoot
+        )
+        if ($owned.Count -eq 0) {
             return
         }
         Start-Sleep -Milliseconds 400
     }
 
-    $stillListening = @()
-    foreach ($port in $ports) {
-        $stillListening += @(
-            Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
-        )
-    }
+    $stillListening = @(
+        Get-OwnedListener -Ports $ports -ExpectedInstallRoot $ExpectedInstallRoot
+    )
     $ownerIds = @($stillListening | Select-Object -ExpandProperty OwningProcess -Unique)
     throw (
-        "等待旧版本释放本机端口超时（{0} 秒）：端口 {1} 仍被占用（PID: {2}）。" -f `
+        "等待旧版本释放本机端口超时（{0} 秒）：端口 {1} 仍被本安装目录的进程占用（PID: {2}）。" -f `
             $TimeoutSeconds,
             (@($ports) -join "、"),
             (($ownerIds | ForEach-Object { [string]$_ }) -join "、")
@@ -567,6 +608,27 @@ function Resolve-ActiveTasksBeforeUpdate {
     }
 }
 
+function Get-UserDataDirFromCommandLine {
+    param([AllowEmptyString()][string]$CommandLine)
+
+    # Chrome 在路径含空格时会加引号：--user-data-dir="C:\a b\profile"。
+    # 只做子串匹配会漏掉这种最常见的形式，导致遗留浏览器回收不掉。
+    # 这里把值提取出来（带引号与不带引号都支持）再比较。
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+        return ""
+    }
+    $match = [regex]::Match(
+        $CommandLine,
+        '--user-data-dir=(?:"([^"]+)"|(\S+))',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    if (-not $match.Success) {
+        return ""
+    }
+    $value = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+    return ([string]$value).Replace("/", "\").TrimEnd("\")
+}
+
 function Stop-OwnedBrowsers {
     param([Parameter(Mandatory = $true)][string]$RuntimeRootPath)
 
@@ -614,14 +676,19 @@ function Stop-OwnedBrowsers {
                         -ErrorAction SilentlyContinue
                 ).CommandLine
             }
-            $expected = "--user-data-dir=" + $userDataDir.Replace("/", "\").TrimEnd("\")
-            $normalizedLine = ([string]$commandLine).Replace("/", "\")
+            $expected = Get-UserDataDirFromCommandLine -CommandLine $commandLine
+            if ([string]::IsNullOrWhiteSpace($expected)) {
+                # 命令行里没有 --user-data-dir，不是我们启动的浏览器。
+                Remove-Item -LiteralPath $recordPath.FullName -Force -ErrorAction SilentlyContinue
+                continue
+            }
+            $normalizedRecorded = $userDataDir.Replace("/", "\").TrimEnd("\")
             if (
-                [string]::IsNullOrWhiteSpace($commandLine) -or
-                $normalizedLine.IndexOf(
+                -not [string]::Equals(
                     $expected,
+                    $normalizedRecorded,
                     [System.StringComparison]::OrdinalIgnoreCase
-                ) -lt 0
+                )
             ) {
                 # 不是我们启动的浏览器（或 PID 已被复用），不碰它。
                 Remove-Item -LiteralPath $recordPath.FullName -Force -ErrorAction SilentlyContinue
@@ -955,6 +1022,7 @@ try {
     # 仍按旧端口探活，于是误报"登录页 404"。必须确认端口真的释放。
     Wait-LocalPortReleased `
         -RuntimeRootPath $RuntimeRoot `
+        -ExpectedInstallRoot $existingInstallRoot `
         -CandidatePorts @(
             (Get-RecordedDesktopPort -RuntimeRootPath $RuntimeRoot),
             1001,

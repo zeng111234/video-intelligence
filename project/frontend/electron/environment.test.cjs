@@ -182,3 +182,48 @@ test("desktop main captures backend output instead of leaving pipes unread", () 
     "重试失败只允许弹出一个错误框",
   );
 });
+
+test("a failing backend never shows two dialogs", () => {
+  const mainSource = readMainSourceCode();
+
+  // 历史缺陷：重启失败弹一个框，重启起来的后端再退出又弹一个，同时
+  // waitForBackend 等满 90 秒超时后还会弹"启动失败"——用户连看两个框，
+  // 第二个还要等一分半。
+  assert.match(
+    mainSource,
+    /let backendFailureReported = false;/,
+    "必须有'只报一次'的标记",
+  );
+  assert.match(
+    mainSource,
+    /function reportBackendFailure\(/,
+    "弹框必须走统一入口",
+  );
+  assert.match(
+    mainSource,
+    /if \(backendFailureReported\) return;/,
+    "reportBackendFailure 必须自己去重",
+  );
+
+  // 后端已确认恢复不了时，不得再干等超时。
+  assert.match(mainSource, /let backendUnrecoverable = false;/);
+  assert.match(
+    mainSource,
+    /if \(backendUnrecoverable\) \{\s*\n\s*throw new Error\("本地服务已停止"\);/,
+    "waitForBackend 必须立刻失败而不是等满超时",
+  );
+
+  // 启动失败处理器在已报过故障时不得再弹第二个框。
+  assert.match(
+    mainSource,
+    /if \(backendFailureReported\) \{\s*\n\s*app\.quit\(\);\s*\n\s*return;/,
+    "handleBootFailure 不得重复弹框",
+  );
+
+  // 全文件只允许一处 showErrorBox。
+  assert.equal(
+    mainSource.split("dialog.showErrorBox").length - 1,
+    1,
+    "只允许一个 showErrorBox 调用点",
+  );
+});
