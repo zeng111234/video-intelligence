@@ -1,4 +1,4 @@
-# Video Intelligence System - Service Startup Script
+﻿# Video Intelligence System - Service Startup Script
 # Version: 2.0.5
 # Date: 2026-07-20
 

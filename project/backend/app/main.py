@@ -165,6 +165,31 @@ async def lifespan(application: FastAPI):
         logger.info("流水线 worker 已启动")
     except Exception as exc:
         logger.warning("流水线 worker 启动失败（不影响 API）: %s", exc)
+    # 恢复被中断的抓取队列，并回收崩溃进程留下的采集租约。
+    #
+    # 后端崩溃/被强杀时 worker 线程随进程消失，队列却停在 running，页面永远
+    # 显示"正在采集"。这一步必须在 worker 启动之后、yield 之前完成，恢复起来的
+    # 队列才能立刻被 worker 接手。
+    try:
+        from project.backend.app.api.v1.crawler import (
+            recover_interrupted_crawler_queues,
+        )
+        from project.backend.app.core.repository import get_repository
+
+        recovery = recover_interrupted_crawler_queues(get_repository())
+        if recovery.get("reaped_providers"):
+            logger.info(
+                "已回收失效采集租约：%s", "、".join(recovery["reaped_providers"])
+            )
+        if recovery.get("recovered"):
+            logger.info("已恢复中断的抓取队列：%s", "、".join(recovery["recovered"]))
+        if recovery.get("exhausted"):
+            logger.warning(
+                "抓取队列自动恢复次数已用尽，已标记失败：%s",
+                "、".join(recovery["exhausted"]),
+            )
+    except Exception as exc:
+        logger.warning("抓取队列恢复失败（不影响启动）: %s", exc)
     try:
         yield
     finally:

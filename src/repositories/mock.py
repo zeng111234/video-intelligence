@@ -566,6 +566,9 @@ class MockRepository:
         lease_seconds: int,
         max_runs_in_window: int | None = None,
         rolling_window_seconds: int = 24 * 60 * 60,
+        backend_instance_id: str | None = None,
+        queue_id: str | None = None,
+        browser_pid: int | None = None,
     ) -> bool:
         state = self._provider_safety_states.get(provider)
         if state is not None:
@@ -599,8 +602,75 @@ class MockRepository:
             rolling_window_started_at=window_start if active_window else now,
             real_runs_in_window=current_runs + 1,
             updated_at=now,
+            backend_instance_id=backend_instance_id,
+            queue_id=queue_id,
+            browser_pid=browser_pid,
+            heartbeat_at=now,
         )
         return True
+
+    def renew_provider_safety_lease(
+        self,
+        *,
+        provider: str,
+        run_id: str,
+        now: datetime,
+        lease_seconds: int,
+        browser_pid: int | None = None,
+    ) -> bool:
+        """续租并刷新心跳；只有仍持有该租约的 run 才能续。"""
+        state = self._provider_safety_states.get(provider)
+        if state is None or state.active_run_id != run_id:
+            return False
+        self._provider_safety_states[provider] = state.model_copy(
+            update={
+                "lease_expires_at": now + timedelta(seconds=max(1, lease_seconds)),
+                "heartbeat_at": now,
+                "updated_at": now,
+                "browser_pid": (
+                    browser_pid if browser_pid is not None else state.browser_pid
+                ),
+            }
+        )
+        return True
+
+    def reap_stale_provider_leases(
+        self,
+        *,
+        now: datetime,
+        live_backend_instance_ids: set[str] | None = None,
+    ) -> list[str]:
+        """回收因后端进程中断而作废的运行租约；不触碰 blocked_until。"""
+        live = live_backend_instance_ids or set()
+        reaped: list[str] = []
+        for provider, state in list(self._provider_safety_states.items()):
+            if not state.active_run_id:
+                continue
+            lease_live = bool(
+                state.lease_expires_at and state.lease_expires_at > now
+            )
+            heartbeat_live = bool(state.heartbeat_at and state.heartbeat_at > now)
+            owner = state.backend_instance_id
+            owner_alive = bool(owner) and str(owner) in live
+            if owner_alive or heartbeat_live:
+                continue
+            if lease_live and not owner:
+                continue
+            if lease_live and owner and live and not owner_alive:
+                continue
+            self._provider_safety_states[provider] = state.model_copy(
+                update={
+                    "active_run_id": None,
+                    "lease_expires_at": None,
+                    "heartbeat_at": None,
+                    "browser_pid": None,
+                    "backend_instance_id": None,
+                    "queue_id": None,
+                    "updated_at": now,
+                }
+            )
+            reaped.append(provider)
+        return reaped
 
     def release_provider_safety_lease(
         self,
@@ -627,6 +697,7 @@ class MockRepository:
             (item for item in (existing_block, requested_block) if item is not None),
             default=None,
         )
+        owned = bool(current and current.active_run_id == run_id)
         state = ProviderSafetyState(
             provider=provider,
             active_run_id=(
@@ -649,6 +720,14 @@ class MockRepository:
             ),
             real_runs_in_window=current.real_runs_in_window if current else 0,
             updated_at=now,
+            # 与 SQLite 实现保持一致：正常释放时清掉归属与心跳，
+            # 租约已属于别人时原样保留。
+            backend_instance_id=(
+                None if owned else (current.backend_instance_id if current else None)
+            ),
+            queue_id=None if owned else (current.queue_id if current else None),
+            browser_pid=None if owned else (current.browser_pid if current else None),
+            heartbeat_at=None if owned else (current.heartbeat_at if current else None),
         )
         self._provider_safety_states[provider] = state
         return state

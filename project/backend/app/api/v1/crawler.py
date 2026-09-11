@@ -4439,6 +4439,127 @@ def _start_crawler_keyword_queue(queue_id: str) -> None:
         )
 
 
+CRAWLER_RECOVERY_MESSAGE = "上次异常中断，正在自动恢复。"
+CRAWLER_RECOVERY_EXHAUSTED_MESSAGE = (
+    "上次异常中断，自动恢复后仍未完成。已找到的素材已保留，可重新抓取。"
+)
+
+
+def recover_interrupted_crawler_queues(repo) -> dict[str, Any]:
+    """启动时恢复被中断的抓取队列，并回收失效的采集租约。
+
+    后端崩溃或被强杀时 worker 线程随进程一起消失，但队列仍停在 running/queued。
+    页面因此永远显示"正在采集"，用户既看不到已经找到的素材，也无法重新开始。
+
+    恢复规则：
+      * 只处理 queued/running 的队列；已结束、已暂停、已取消的一律不动。
+      * 队列的 backend_instance_id 等于本进程时跳过 —— 那说明它正被本进程的
+        worker 跑着（正常情况下启动阶段不会出现）。
+      * 第一次中断：把 running 项退回 queued，保留已扫描到的候选与批次，
+        自动重启一次。queued 项原样保留，顺序不变。
+      * 已经自动恢复过一次又中断：把该项标记 failed，但保留 partial_batch_ids
+        与 progress_candidates，让页面仍能显示已找到的素材并提供"重新抓取"。
+    """
+    now = datetime.now().astimezone()
+    result: dict[str, Any] = {
+        "reaped_providers": [],
+        "recovered": [],
+        "exhausted": [],
+    }
+
+    # 先回收崩溃进程留下的运行租约，否则恢复起来的队列会立刻被自己的旧租约挡住。
+    try:
+        result["reaped_providers"] = repo.reap_stale_provider_leases(
+            now=now,
+            live_backend_instance_ids={BACKEND_INSTANCE_ID},
+        )
+    except Exception as exc:  # noqa: BLE001 - 恢复失败不能拖垮启动
+        logger.warning("回收失效采集租约失败：%s", exc)
+
+    try:
+        queues = repo.list_crawler_keyword_queues(50)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("读取抓取队列失败：%s", exc)
+        return result
+
+    for queue in queues:
+        if queue.status not in {KeywordQueueStatus.QUEUED, KeywordQueueStatus.RUNNING}:
+            continue
+        if queue.backend_instance_id == BACKEND_INSTANCE_ID:
+            continue
+        has_pending = any(
+            item.status
+            in {KeywordQueueItemStatus.RUNNING, KeywordQueueItemStatus.QUEUED}
+            for item in queue.items
+        )
+        if not has_pending:
+            continue
+
+        if int(queue.recovery_attempts or 0) >= 1:
+            # 已经自动恢复过一次又被中断：停止自动重试，如实报失败。
+            items = [
+                item.model_copy(
+                    update={
+                        "status": KeywordQueueItemStatus.FAILED,
+                        "error": CRAWLER_RECOVERY_EXHAUSTED_MESSAGE,
+                        "progress_stage": "failed",
+                        "progress_message": CRAWLER_RECOVERY_EXHAUSTED_MESSAGE,
+                        "finished_at": now,
+                    }
+                )
+                if item.status
+                in {KeywordQueueItemStatus.RUNNING, KeywordQueueItemStatus.QUEUED}
+                else item
+                for item in queue.items
+            ]
+            _save_crawler_queue(
+                repo,
+                queue,
+                items=items,
+                status=KeywordQueueStatus.FAILED,
+                error=CRAWLER_RECOVERY_EXHAUSTED_MESSAGE,
+                finished_at=now,
+                backend_instance_id=None,
+            )
+            result["exhausted"].append(queue.queue_id)
+            logger.warning(
+                "抓取队列自动恢复次数已用尽，标记失败：%s", queue.queue_id
+            )
+            continue
+
+        # 第一次中断：只把 running 项退回 queued，queued 项原样保留（顺序不变）。
+        items = [
+            item.model_copy(
+                update={
+                    "status": KeywordQueueItemStatus.QUEUED,
+                    "error": None,
+                    "progress_stage": "recovering",
+                    "progress_message": CRAWLER_RECOVERY_MESSAGE,
+                    "started_at": None,
+                    "finished_at": None,
+                }
+            )
+            if item.status == KeywordQueueItemStatus.RUNNING
+            else item
+            for item in queue.items
+        ]
+        _save_crawler_queue(
+            repo,
+            queue,
+            items=items,
+            status=KeywordQueueStatus.QUEUED,
+            error=None,
+            finished_at=None,
+            backend_instance_id=BACKEND_INSTANCE_ID,
+            recovery_attempts=int(queue.recovery_attempts or 0) + 1,
+        )
+        _start_crawler_keyword_queue(queue.queue_id)
+        result["recovered"].append(queue.queue_id)
+        logger.info("已恢复被中断的抓取队列：%s", queue.queue_id)
+
+    return result
+
+
 @router.post("/keyword-queues", response_model=CrawlerKeywordQueueResponse)
 def create_crawler_keyword_queue(
     body: CrawlerKeywordQueueRequest,

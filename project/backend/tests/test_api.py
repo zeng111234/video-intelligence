@@ -2141,10 +2141,14 @@ class TestCopywritingProductionConfig:
             )
             assert create_resp.status_code == 200
             task = create_resp.json()
-            assert task["status"] == "succeeded"
-            assert task["result_text"] == "未配置 Key 测试"
-            assert task["compliance_status"] == "best_effort"
-            assert task["error_message"] is None
+            # 未配置 Key 时模型一次都没有产出。此前这里断言 succeeded 且
+            # result_text 等于用户输入的概要，等于把输入当成生成结果返回，
+            # 界面上表现为"接口 200，但内容和原文一模一样"。必须如实报失败。
+            assert task["status"] == "failed"
+            assert task["result_text"] is None
+            assert task["compliance_status"] == "model_unavailable"
+            assert task["charged_credits"] == 0
+            assert "没有返回可用的新内容" in task["error_message"]
             assert task["is_mock"] is False
         finally:
             if previous_service is None:

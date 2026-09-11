@@ -932,6 +932,13 @@ class CrawlerKeywordQueue(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
     finished_at: datetime | None = None
     error: str | None = None
+    # 崩溃恢复（0.2.52）。
+    #
+    # 后端崩溃/被强杀时 worker 线程随之消失，但队列仍停在 running，页面于是
+    # 永远显示"正在采集"。启动时据此判断该队列是否属于一个已经退出的后端。
+    # recovery_attempts 限制自动恢复只做一次，避免恢复→崩溃→再恢复的死循环。
+    backend_instance_id: str | None = None
+    recovery_attempts: int = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def validate_window(self):
