@@ -353,11 +353,12 @@ Windows EXE 打包：
 - 前端 http://127.0.0.1:1001 返回 200；
 - 前端 23 个测试文件、204 个测试通过；
 - npx tsc --noEmit 通过；
-- npm run build 通过。
+- npm run build 通过；
+- Windows x64 EXE 已生成，直接启动解包版后 /health 返回 200、control_plane_enabled=true，且已绑定 https://xmt.syszr.cn。
 
-开发测试补装 requirements-dev.txt 后，全量 Python 测试有 7 项失败，不能标记为全量验收通过：
-- 6 项依赖 work/ 阶段性证据目录或 .git 元数据，干净 GitHub 克隆本来不会包含这些内容；
-- 1 项是当前 overlay preview 行为断言不一致，需要维护者单独修复或确认测试预期；
+开发测试补装 requirements-dev.txt 后，当前交付分支全量 Python 测试通过：
+- 依赖 work/ 阶段性证据目录的历史测试，在证据不存在时按明确原因跳过；
+- 与当前字幕强调逻辑相反的旧 overlay preview 断言已修正；
 - 常规用户只执行 start.bat 时不安装 requirements-dev.txt，这不阻止普通启动，但二开验收时必须额外安装开发依赖。
 
 本次 GitHub 交付使用 codex/company-handoff-20260911 分支，已从该分支全新克隆并通过环境安装与启动检查。不要再使用旧的 feature/brand-emphasis-style 远端分支。
