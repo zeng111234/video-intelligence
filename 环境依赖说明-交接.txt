@@ -236,9 +236,10 @@ Python 测试和静态检查：
 
 本次已提供一个可直接安装的 Windows x64 客户端：
 - 文件：交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe。
-- SHA256：765279b79d4581b9e36abb4f38162ad65908fb78461edc3f9d9e2e0a0b0ea725。
+- SHA256：376930092cb5c6c5b71e963b6ec55acd4ab35cbe123aeab8a58af74f9cc84d60。
 - 该安装包已包含 Electron、Python 后端运行时、FFmpeg 和 FFprobe；接收方运行已生成的安装包时，不需要另外安装 Python、Node.js 或 FFmpeg。
 - 该安装包绑定控制层地址 https://xmt.syszr.cn，但不包含永久供应商密钥、密码、Token 或 SSH 私钥。公司凭据仍从公司控制层/公司密钥管理系统提供。
+- 正式安装包启用公司控制层时不是供应商 Sandbox：转写、云剪辑和文案分别使用 cloud、aliyun、production；Electron 的 sandbox 仅表示渲染进程安全隔离。
 - 本机已验证解包版启动后 /health 返回 200 且 control_plane_enabled=true；正式登录、激活码、供应商调用和剪辑业务仍须在公司电脑上验收。
 
 重新打包除了源码开发依赖，还需要：

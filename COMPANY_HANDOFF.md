@@ -56,7 +56,7 @@ VideoInsight 是短视频热点洞察与智能生产工作台，主要包含：
 
 源码预览可以使用 `scripts\\start_all_services.ps1 -UseCompanyServer`，但必须先确认公司控制层地址和权限，且先用低成本/沙箱模式验收。
 
-正式 Windows 安装包不应把永久供应商密钥放进客户端；正式密钥应留在公司控制层或公司的密钥管理系统中。
+正式 Windows 安装包不应把永久供应商密钥放进客户端；正式密钥应留在公司控制层或公司的密钥管理系统中。启用公司控制层的安装包不是供应商 Sandbox：启动器会把核心云能力设为 `ASR_MODE=cloud`、`VIDEO_EDITOR_PROVIDER_MODE=aliyun`、`COPYWRITING_MODE=production`；Electron 的 `webPreferences.sandbox=true` 只是桌面渲染进程隔离，不能与业务演示模式混淆。
 
 ## 5. 代码结构
 
@@ -757,7 +757,7 @@ ssh videoinsight-server "du -xhd1 /opt/videoinsight-control-plane 2>/dev/null | 
 |---|---|
 | `交付文件/exports/VideoInsight-source-handoff-company-env-2026-09-11.zip` | 见同目录 `.sha256.txt` 记录 |
 | `交付文件/exports/VideoInsight-company-configured-handoff-2026-09-11.zip` | 已撤销，不得交付 |
-| `交付文件/exports/VideoInsight-Windows-installer-0.2.48-dev.1.exe` | `9053073FFBCF416D307F4DA25AA611C325C12D26302DA8CD247C785371096333` |
+| `交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe` | `376930092cb5c6c5b71e963b6ec55acd4ab35cbe123aeab8a58af74f9cc84d60` |
 
 上表第二行的旧“配置版” ZIP 已作废，不得交付。源码包的哈希记录放在包外同目录，避免把哈希文本重新写入压缩包后改变压缩包自身哈希。
 
@@ -866,12 +866,13 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 - 前端依赖按 `package-lock.json` 安装成功；
 - `.env` 能从 `.env.example` 自动生成，没有带入个人配置；
 - FFmpeg、FFprobe、Chrome/Edge 检测通过；
-- 后端 `/health` 返回 200，桌面协议和本地沙箱标志正确；
+- 后端 `/health` 返回 200，桌面协议和公司控制层标志正确；源码本地演示模式与正式桌面模式边界清晰；
 - 前端 `http://127.0.0.1:1001` 返回 200；
 - 前端 23 个测试文件、204 个测试通过；
 - `npx tsc --noEmit` 和 `npm run build` 通过。
 - 在同一干净副本生成了 Windows x64 安装包；安装包内含 Electron、打包后的 FastAPI 后端及 FFmpeg/FFprobe，不要求接收方另外安装 Python/Node/FFmpeg 才能启动客户端；
 - 直接启动解包版 EXE 后，本地 `/health` 返回 200，且 `control_plane_enabled=true`，已绑定公司控制层地址 `https://xmt.syszr.cn`。
+- 正式桌面启动器回归通过：控制层有效时使用 `ASR_MODE=cloud`、`VIDEO_EDITOR_PROVIDER_MODE=aliyun`、`COPYWRITING_MODE=production`；不会把个人供应商密钥注入客户端。
 
 这证明“当前工作区复制成干净源码后，在一台具备网络和基础运行时的 Windows 电脑上可以自举启动”。这不等于已经证明公司的具体电脑、网络、杀毒软件策略和供应商账号一定没有环境差异。
 
@@ -918,10 +919,10 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 本次已生成可直接交给公司的 Windows x64 安装包：
 
 - 文件：`交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe`；
-- SHA256：`765279b79d4581b9e36abb4f38162ad65908fb78461edc3f9d9e2e0a0b0ea725`；
+- SHA256：`376930092cb5c6c5b71e963b6ec55acd4ab35cbe123aeab8a58af74f9cc84d60`；
 - 构建版本：`0.2.49-company-handoff`；
 - 控制层地址：`https://xmt.syszr.cn`；
 - 交付包不含永久供应商密钥、密码、Token、个人 `.env` 或 SSH 私钥；
-- 安装包只负责读取公司已配置的控制层/系统环境，密钥仍由公司密钥管理系统保管。
+- 安装包绑定公司控制层并使用其云端能力，密钥仍由公司密钥管理系统保管；它不依赖本机 Sandbox 才能完成正式云流程。
 
 双击安装包可以验证“客户端能否启动”；登录、激活码、云端供应商调用和正式剪辑链路仍必须在公司提供的账号、网络和权限下做一次业务验收，不能用本机健康检查替代。
