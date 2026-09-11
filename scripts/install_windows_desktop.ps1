@@ -445,6 +445,206 @@ function Remove-StaleDesktopRuntimeState {
     }
 }
 
+function Get-ActiveTaskSummary {
+    param([Parameter(Mandatory = $true)][string]$RuntimeRootPath)
+
+    # 覆盖安装会打断正在跑的抓取/转写/数字人/剪辑。旧版本还活着时只能用免登录
+    # 接口，因此读 /health 里的 active_task_count —— 它只含数量，不含任务内容。
+    $candidates = @(
+        (Get-RecordedDesktopPort -RuntimeRootPath $RuntimeRootPath),
+        1001,
+        2001
+    ) | Where-Object { $_ -ge 1024 -and $_ -le 65535 } | Select-Object -Unique
+
+    foreach ($port in $candidates) {
+        try {
+            $response = Invoke-WebRequest `
+                -UseBasicParsing `
+                -Uri ("http://127.0.0.1:{0}/health" -f $port) `
+                -TimeoutSec 3 `
+                -ErrorAction Stop
+            $payload = $response.Content | ConvertFrom-Json
+            if ($payload.service -eq "videoinsight-desktop-api") {
+                return [pscustomobject]@{
+                    Count  = [int]$payload.active_task_count
+                    ByKind = $payload.active_tasks_by_kind
+                    Port   = $port
+                }
+            }
+        }
+        catch {
+        }
+    }
+    return [pscustomobject]@{ Count = 0; ByKind = $null; Port = 0 }
+}
+
+function Format-ActiveTaskSummary {
+    param([Parameter(Mandatory = $true)][object]$Summary)
+
+    $labels = @{
+        crawler       = "找素材"
+        video_editing = "剪辑"
+        transcription = "转写"
+        avatar        = "数字人"
+        copywriting   = "文案"
+        publishing    = "发布"
+    }
+    $parts = @()
+    if ($Summary.ByKind) {
+        foreach ($property in $Summary.ByKind.PSObject.Properties) {
+            $label = $labels[$property.Name]
+            if (-not $label) { $label = $property.Name }
+            $parts += ("{0} {1} 个" -f $label, $property.Value)
+        }
+    }
+    if ($parts.Count -eq 0) {
+        return ("共 {0} 个任务正在进行。" -f $Summary.Count)
+    }
+    return ("正在进行的任务：" + ($parts -join "、") + "。")
+}
+
+function Resolve-ActiveTasksBeforeUpdate {
+    param(
+        [Parameter(Mandatory = $true)][string]$RuntimeRootPath,
+        [switch]$Quiet,
+        [int]$WaitTimeoutSeconds = 900
+    )
+
+    $summary = Get-ActiveTaskSummary -RuntimeRootPath $RuntimeRootPath
+    if ($summary.Count -le 0) {
+        return
+    }
+    if ($Quiet) {
+        # 静默模式没有交互界面，只能记录后继续；新版启动时会自动恢复被中断的
+        # 抓取队列，因此不会留下永久卡住的任务。
+        Write-Warning (
+            "检测到 {0} 个进行中的任务，静默安装将继续进行。" -f $summary.Count
+        )
+        return
+    }
+
+    $detail = Format-ActiveTaskSummary -Summary $summary
+    Write-Host $detail
+
+    while ($true) {
+        Add-Type -AssemblyName PresentationFramework
+        $answer = [System.Windows.MessageBox]::Show(
+            (
+                "$detail`n`n现在更新会打断这些任务。`n`n" +
+                "选择""是""：等它们跑完再更新（软件保持打开即可）。`n" +
+                "选择""否""：立即更新；新版启动后会自动恢复被中断的抓取任务。`n" +
+                "选择""取消""：先不更新。"
+            ),
+            "VideoInsight 有新版本，但还有任务在跑",
+            [System.Windows.MessageBoxButton]::YesNoCancel,
+            [System.Windows.MessageBoxImage]::Warning
+        )
+
+        if ($answer -eq [System.Windows.MessageBoxResult]::Cancel) {
+            throw "用户取消了更新：仍有任务正在进行。"
+        }
+        if ($answer -eq [System.Windows.MessageBoxResult]::No) {
+            return
+        }
+
+        # 等待任务跑完。期间不打断用户；超时后重新询问，不无限静默等待。
+        $phase = "等待进行中的任务完成"
+        $deadline = (Get-Date).AddSeconds($WaitTimeoutSeconds)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 3
+            $current = Get-ActiveTaskSummary -RuntimeRootPath $RuntimeRootPath
+            if ($current.Count -le 0) {
+                return
+            }
+        }
+        $summary = Get-ActiveTaskSummary -RuntimeRootPath $RuntimeRootPath
+        if ($summary.Count -le 0) {
+            return
+        }
+        $detail = (
+            "等待超时，仍有任务在进行。" + (Format-ActiveTaskSummary -Summary $summary)
+        )
+    }
+}
+
+function Stop-OwnedBrowsers {
+    param([Parameter(Mandatory = $true)][string]$RuntimeRootPath)
+
+    # 后端退出时它自己会关闭由它启动的浏览器；但旧版本被强杀时来不及做，
+    # 残留的 Chrome 会占住 profile 锁，让新版抓取打不开页面。
+    #
+    # 只结束 PID 与 --user-data-dir 都匹配的进程。绝不按进程名批量结束 Chrome，
+    # 否则会连带关掉用户自己开着的浏览器。
+    $profileRoot = Join-Path $RuntimeRootPath "data\browser_profiles"
+    if (-not (Test-Path -LiteralPath $profileRoot -PathType Container)) {
+        return
+    }
+
+    $records = @(
+        Get-ChildItem `
+            -LiteralPath $profileRoot `
+            -Recurse `
+            -Filter "browser-process.json" `
+            -File `
+            -ErrorAction SilentlyContinue
+    )
+    foreach ($recordPath in $records) {
+        try {
+            $record = Get-Content -LiteralPath $recordPath.FullName -Raw | ConvertFrom-Json
+            $recordedProcessId = [int]$record.pid
+            $userDataDir = [string]$record.user_data_dir
+            if ($recordedProcessId -le 0 -or [string]::IsNullOrWhiteSpace($userDataDir)) {
+                Remove-Item -LiteralPath $recordPath.FullName -Force -ErrorAction SilentlyContinue
+                continue
+            }
+            $browserProcess = Get-Process -Id $recordedProcessId -ErrorAction SilentlyContinue
+            if (-not $browserProcess) {
+                Remove-Item -LiteralPath $recordPath.FullName -Force -ErrorAction SilentlyContinue
+                continue
+            }
+            # 必须核对命令行里的 --user-data-dir：PID 会被系统复用，可能已经
+            # 指向用户后来打开的别的程序。
+            $commandLine = ""
+            try { $commandLine = [string]$browserProcess.CommandLine } catch { $commandLine = "" }
+            if ([string]::IsNullOrWhiteSpace($commandLine)) {
+                $commandLine = [string](
+                    Get-CimInstance `
+                        Win32_Process `
+                        -Filter "ProcessId=$recordedProcessId" `
+                        -ErrorAction SilentlyContinue
+                ).CommandLine
+            }
+            $expected = "--user-data-dir=" + $userDataDir.Replace("/", "\").TrimEnd("\")
+            $normalizedLine = ([string]$commandLine).Replace("/", "\")
+            if (
+                [string]::IsNullOrWhiteSpace($commandLine) -or
+                $normalizedLine.IndexOf(
+                    $expected,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                ) -lt 0
+            ) {
+                # 不是我们启动的浏览器（或 PID 已被复用），不碰它。
+                Remove-Item -LiteralPath $recordPath.FullName -Force -ErrorAction SilentlyContinue
+                continue
+            }
+            Write-Host ("关闭上次遗留的浏览器进程（PID {0}）。" -f $recordedProcessId)
+            Stop-Process -Id $recordedProcessId -Force -ErrorAction SilentlyContinue
+            try {
+                Wait-Process -Id $recordedProcessId -Timeout 20 -ErrorAction Stop
+            }
+            catch {
+                Write-Warning (
+                    "浏览器进程 {0} 未在 20 秒内退出，请手动关闭后重试。" -f $recordedProcessId
+                )
+            }
+            Remove-Item -LiteralPath $recordPath.FullName -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            # 单条记录损坏不应中断安装。
+        }
+    }
+}
+
 function Restore-UninstallRegistration {
     param(
         [string]$RegistryPath,
@@ -741,8 +941,16 @@ try {
         throw "新 payload 的实际 EXE 版本 $stagedVersion 与安装包版本 $Version 不一致。"
     }
 
+    # 覆盖安装前先确认没有正在跑的抓取/转写/数字人/剪辑任务，避免打断用户的活。
+    # 必须在关闭旧进程之前问，否则 /health 已经没人应答，永远查不到。
+    $phase = "检查进行中的任务"
+    Resolve-ActiveTasksBeforeUpdate -RuntimeRootPath $RuntimeRoot -Quiet:$Quiet
+
     $phase = "关闭旧版后台进程"
     Stop-VideoInsightProcesses -ExpectedInstallRoot $existingInstallRoot
+    # 旧版被强杀时可能留下占用 profile 锁的浏览器；只回收确实由它启动的那些。
+    $phase = "关闭上次遗留的浏览器"
+    Stop-OwnedBrowsers -RuntimeRootPath $RuntimeRoot
     # 只等进程退出不够：端口可能还被占用，新版本会挑到别的端口，而验收脚本
     # 仍按旧端口探活，于是误报"登录页 404"。必须确认端口真的释放。
     Wait-LocalPortReleased `

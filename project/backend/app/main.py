@@ -6,7 +6,9 @@ import logging
 import os
 import secrets
 import sys
+import time
 from pathlib import Path
+from typing import Any
 
 # 确保项目根目录在 Python 路径中
 _project_root = str(Path(__file__).resolve().parent.parent.parent.parent)
@@ -472,8 +474,62 @@ async def root():
     return HTMLResponse(content=_LANDING_HTML, status_code=200)
 
 
+# 正在运行的任务计数（0.2.52）。
+#
+# 安装器需要在替换程序文件之前知道"现在有没有任务在跑"，否则升级会打断抓取、
+# 转写、数字人或剪辑，用户看到的就是"更新完任务没了"。
+#
+# 安装器在旧版本还活着的时候只能用免登录接口，因此这里只暴露**数量**，
+# 不含任务 ID、关键词、文件路径或任何客户内容；服务本身只监听 127.0.0.1。
+# 加一个很短的缓存，避免启动器轮询 /health 时反复全表扫描。
+_ACTIVITY_SNAPSHOT_TTL_SECONDS = 2.0
+_activity_snapshot_cache: dict[str, Any] = {"at": 0.0, "value": None}
+
+_ACTIVE_TASK_STATUSES = {"queued", "submitted", "running"}
+
+
+def _active_task_counts() -> dict[str, Any]:
+    now = time.monotonic()
+    cached = _activity_snapshot_cache.get("value")
+    if cached is not None and now - float(_activity_snapshot_cache["at"]) < (
+        _ACTIVITY_SNAPSHOT_TTL_SECONDS
+    ):
+        return cached
+
+    by_kind: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    total = 0
+    try:
+        from project.backend.app.core.repository import get_repository
+
+        for task in get_repository().list_tasks():
+            status = str(getattr(task.status, "value", task.status) or "")
+            if status not in _ACTIVE_TASK_STATUSES:
+                continue
+            total += 1
+            kind = str(getattr(task.kind, "value", task.kind) or "unknown")
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            by_status[status] = by_status.get(status, 0) + 1
+    except Exception as exc:  # noqa: BLE001 - 统计失败不能影响健康检查
+        logger.warning("统计进行中任务失败：%s", exc)
+        return {"active_task_count": 0, "by_kind": {}, "by_status": {}, "error": True}
+
+    value = {
+        "active_task_count": total,
+        "by_kind": by_kind,
+        "by_status": by_status,
+        "error": False,
+    }
+    _activity_snapshot_cache["at"] = now
+    _activity_snapshot_cache["value"] = value
+    return value
+
+
 @app.get("/health")
 async def health():
+    # 进行中任务的**数量**，供安装器在覆盖安装前判断是否可以安全升级。
+    # 不含任务内容；详见 _active_task_counts 的说明。
+    activity = _active_task_counts()
     return {
         "status": "ok",
         "service": "videoinsight-desktop-api",
@@ -485,6 +541,8 @@ async def health():
         "desktop_demo": os.getenv("VIDEOINSIGHT_DESKTOP_DEMO", "").strip().casefold()
         in {"1", "true", "yes", "on"},
         "control_plane_enabled": control_plane_enabled(),
+        "active_task_count": activity["active_task_count"],
+        "active_tasks_by_kind": activity["by_kind"],
     }
 
 

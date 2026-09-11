@@ -3212,3 +3212,89 @@ def test_windows_backend_packages_builtin_video_templates():
         "media\\windows-media-tools.sha256",
     ):
         assert required_media_file in final_script
+
+
+# ---------------------------------------------------------------------------
+# 0.2.52：升级前检查进行中的任务，并且只回收自己的浏览器
+# ---------------------------------------------------------------------------
+
+
+def test_installer_asks_about_running_tasks_before_stopping_the_old_version():
+    """必须在旧进程还活着的时候问，否则 /health 没人应答，永远查不到。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "Resolve-ActiveTasksBeforeUpdate" in script_text
+    assert "active_task_count" in script_text
+
+    ask_index = script_text.index(
+        "Resolve-ActiveTasksBeforeUpdate -RuntimeRootPath $RuntimeRoot"
+    )
+    stop_index = script_text.index(
+        "Stop-VideoInsightProcesses -ExpectedInstallRoot $existingInstallRoot"
+    )
+    assert ask_index < stop_index, "检查进行中任务必须早于关闭旧进程"
+
+    # 两个选项都要有：等任务跑完，或立即更新。
+    assert "等待进行中的任务完成" in script_text
+    assert "自动恢复被中断的抓取任务" in script_text
+
+
+def test_installer_reclaims_only_browsers_it_started():
+    """只按 PID + --user-data-dir 回收，绝不按进程名批量结束 Chrome。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "Stop-OwnedBrowsers" in script_text
+    assert "browser-process.json" in script_text
+    assert "--user-data-dir=" in script_text
+    # 必须核对命令行，因为 PID 会被系统复用。
+    assert "CommandLine" in script_text
+
+    # 禁止按进程名批量结束。
+    assert "taskkill /IM" not in script_text
+    assert "Stop-Process -Name" not in script_text
+    assert "Get-Process -Name chrome" not in script_text
+    assert "Get-Process -Name msedge" not in script_text
+
+
+def test_installer_holds_a_global_mutex_and_releases_it():
+    """重复双击只能有一个安装流程；失败也不能把用户永久挡在门外。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "Global\\VideoInsightInstaller" in script_text
+    assert "WaitOne(0)" in script_text
+    assert "AbandonedMutexException" in script_text
+    assert "ReleaseMutex()" in script_text
+    assert "finally {" in script_text
+
+
+def test_installer_waits_for_ports_and_clears_stale_runtime_state():
+    """只等进程退出不够：端口没释放会让新版本挑到别的端口，验收误报 404。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "Wait-LocalPortReleased" in script_text
+    assert "Get-NetTCPConnection -LocalPort" in script_text
+    assert "Remove-StaleDesktopRuntimeState" in script_text
+
+
+def test_verifier_proves_the_runtime_record_belongs_to_this_install():
+    """旧记录会让验收按已死进程的错误端口探活，必须证明记录是本次产生的。"""
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "verify_windows_install.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "InstalledAfterUtc" in script_text
+    assert "started_at" in script_text
+    assert "Test-PathInsideRoot" in script_text
+    assert "Runtime record belongs to this install" in script_text
+    installer_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+    assert "-InstalledAfterUtc $desktopStartedAtUtc" in installer_text
