@@ -13,6 +13,8 @@ from urllib.error import HTTPError, URLError
 import pytest
 
 from src.adapters.llm import (
+    DEFAULT_COPYWRITING_BASE_URL,
+    DEFAULT_COPYWRITING_MODEL,
     DisabledCopywritingEngine,
     LLMAdapterError,
     OpenAICompatibleCopywritingEngine,
@@ -323,18 +325,44 @@ class TestOpenAICompatibleCopywritingEngine:
         assert "待审核口播稿" in sent["messages"][1]["content"]
 
     def test_from_env_defaults(self):
-        """from_env 应使用环境变量。"""
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("COPYWRITING_API_KEY", None)
-            os.environ.pop("COPYWRITING_BASE_URL", None)
-            os.environ.pop("COPYWRITING_MODEL", None)
-            os.environ.pop("OPENAI_API_KEY", None)
-            os.environ.pop("OPENAI_BASE_URL", None)
-            os.environ.pop("COPYWRITING_LLM_MODEL", None)
+        """from_env 在完全没有配置时应回落到交付默认供应商（MiniMax）。
+
+        交付默认值曾经是 DeepSeek，但开发机已删除 DeepSeek 密钥，新电脑照抄
+        旧默认值必然调用失败，因此默认值已改为 MiniMax 并在 src/adapters/llm.py
+        集中维护。
+
+        注意：src/services 下多个模块在 import 时会执行 load_dotenv()，真实的
+        .env 会进入进程环境，所以这里必须把 MiniMax 相关变量一并清空，
+        否则本用例会随测试执行顺序产生假失败。
+        """
+        cleared_keys = (
+            "COPYWRITING_API_KEY",
+            "COPYWRITING_BASE_URL",
+            "COPYWRITING_MODEL",
+            "COPYWRITING_LLM_MODEL",
+            "OPENAI_API_KEY",
+            "OPENAI_BASE_URL",
+            "MINIMAX_API_KEY",
+            "MINIMAX_TEXT_API_KEY",
+            "MINIMAX_TOKEN_PLAN_KEY",
+        )
+        original = {key: os.environ.get(key) for key in cleared_keys}
+        try:
+            for key in cleared_keys:
+                os.environ.pop(key, None)
             engine = OpenAICompatibleCopywritingEngine.from_env()
             assert engine.api_key == ""
-            assert engine.base_url == "https://api.deepseek.com"
-            assert engine.model == "deepseek-v4-flash"
+            assert engine.base_url == DEFAULT_COPYWRITING_BASE_URL
+            assert engine.model == DEFAULT_COPYWRITING_MODEL
+            # 交付默认供应商必须是 MiniMax，不能再是已删除密钥的 DeepSeek。
+            assert "minimax" in engine.base_url
+            assert "deepseek" not in engine.base_url
+        finally:
+            for key, value in original.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
     def test_from_env_with_vars(self):
         with patch.dict(
