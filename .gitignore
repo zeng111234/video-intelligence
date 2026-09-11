@@ -69,6 +69,7 @@ deploy/control-plane/updates/
 
 # Local agent diagnostics and runtime logs
 .reasonix/
+*.log
 backend_customer.log
 frontend_run.log
 _diag_*.py
