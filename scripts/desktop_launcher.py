@@ -187,10 +187,19 @@ def _configure_desktop_environment(
         "AUTH_SESSION_STORE": "sqlite",
         "VIDEOINSIGHT_FRONTEND_DIST": str(root / "project" / "frontend" / "dist"),
         "VIDEOINSIGHT_BACKEND_ORIGIN": f"http://127.0.0.1:{port or DESKTOP_PORT}",
-        "ASR_MODE": "sandbox",
-        "VIDEO_EDITOR_PROVIDER_MODE": "sandbox",
+        # A configured company control plane is the production authority for
+        # the packaged client.  Keep the local-demo fallback explicitly
+        # sandboxed, but do not start a real customer install in fake mode:
+        # subtitles/status endpoints use ASR_MODE directly and would reject
+        # uploads while the remote runtime is otherwise available.
+        "ASR_MODE": "cloud" if control_plane_enabled else "sandbox",
+        "VIDEO_EDITOR_PROVIDER_MODE": (
+            "aliyun" if control_plane_enabled else "sandbox"
+        ),
         "CRAWLER_PROVIDER_MODE": "sandbox",
-        "COPYWRITING_MODE": "sandbox",
+        "COPYWRITING_MODE": (
+            "production" if control_plane_enabled else "sandbox"
+        ),
         "AVATAR_PROVIDER_MODE": "sandbox",
         "CRAWLER_ONEAPI_AUTO_ENABLED": "false",
         "DOUYIN_OFFICIAL_HOT_ENABLED": "false",

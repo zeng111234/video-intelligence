@@ -239,6 +239,13 @@ def test_desktop_control_plane_config_enables_remote_authority(tmp_path):
         assert desktop_launcher._configure_desktop_environment(
             tmp_path, tmp_path / "runtime"
         ) is True
+        assert desktop_launcher.os.environ["ASR_MODE"] == "cloud"
+        assert desktop_launcher.os.environ["VIDEO_EDITOR_PROVIDER_MODE"] == "aliyun"
+        assert desktop_launcher.os.environ["COPYWRITING_MODE"] == "production"
+        # Crawler and avatar still use their explicit customer-desktop/remote
+        # service boundaries; they must not inherit a supplier credential.
+        assert desktop_launcher.os.environ["CRAWLER_PROVIDER_MODE"] == "sandbox"
+        assert desktop_launcher.os.environ["AVATAR_PROVIDER_MODE"] == "sandbox"
         assert (
             desktop_launcher.os.environ["VIDEOINSIGHT_CONTROL_PLANE_URL"]
             == "https://video-api.company.cn"
