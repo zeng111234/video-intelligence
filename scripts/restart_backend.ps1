@@ -58,7 +58,12 @@ function Import-ProjectEnvironment {
         if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
             $value = $value.Substring(1, $value.Length - 2)
         }
-        [Environment]::SetEnvironmentVariable($key, $value, "Process")
+        # Preserve a non-empty company-managed system/user variable.  The
+        # checked-in .env remains the fallback for a portable local install.
+        $currentValue = [Environment]::GetEnvironmentVariable($key, "Process")
+        if ([string]::IsNullOrWhiteSpace($currentValue)) {
+            [Environment]::SetEnvironmentVariable($key, $value, "Process")
+        }
     }
 }
 

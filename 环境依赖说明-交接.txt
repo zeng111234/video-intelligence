@@ -231,8 +231,10 @@ Python 测试和静态检查：
 
 这些检查通过只代表代码和构建门通过，不等于已经完成真实视频、页面播放、下载、云端任务或生产服务器验收。涉及视频剪辑时还要按 COMPANY_HANDOFF.md 的正式验收链路验证。
 
-九、Windows EXE 打包环境
+九、Windows EXE 构建说明（不属于本次交付）
 ------------------------
+
+本次不交付 Windows x64 安装包。以下内容只供公司未来需要自行构建 EXE 时参考；当前交付以源码 ZIP、`start.bat` 和源码验收为准。目录中历史 0.2.48/0.2.49 安装包不能代表当前源码，也不能作为本次交付物。
 
 重新打包除了源码开发依赖，还需要：
 1. Python 3.12+ 和根目录 .venv。
@@ -244,7 +246,11 @@ Python 测试和静态检查：
 
 推荐构建前先通过检查，再执行：
 
-    .\scripts\build_windows_installer.ps1 -Version <new-version>
+    .\scripts\build_windows_installer.ps1 -Version <new-version> -ControlPlaneUrl https://<company-control-plane-domain>
+
+当前公司地址的示例命令为：
+
+    .\scripts\build_windows_installer.ps1 -Version <new-version> -ControlPlaneUrl https://xmt.syszr.cn
 
 构建脚本会执行前端类型检查、前端测试、桌面更新测试、Python 发布测试、Vite 构建、PyInstaller 打包和 electron-builder 安装包构建。
 
@@ -326,3 +332,34 @@ Windows EXE 打包：
 7. 服务器问题按 COMPANY_HANDOFF.md 的 SSH 手册执行只读检查，再决定是否重启或回滚。
 
 完成环境接管后，应把实际使用的 Python、Node.js、FFmpeg、数据库、控制层版本和公司密钥指纹补充到公司的内部资产台账；不要回写任何私钥正文或真实 Token。
+
+十三、干净电脑源码验证记录与 GitHub 交付门槛
+-------------------------------------------
+
+历史基线曾从 GitHub 的 codex/company-handoff-20260911 分支完成全新克隆，不复用现有开发目录的 .git、.venv、venv、node_modules、.env、数据库、日志、work、outputs、build 或浏览器状态。当前接收方仍必须重新核对源码 ZIP、分支和提交号是否一致；运行时必需的 data/templates/builtin.json 应作为版本文件存在。
+
+已经验证通过：
+- setup_windows.ps1 从零创建 .venv；
+- 根目录 requirements.txt 和 project/backend/requirements.txt 安装成功；
+- project/frontend 按 package-lock.json 安装成功；
+- .env 从 .env.example 自动创建，未复制个人配置；
+- FFmpeg、FFprobe、Chrome/Edge 检测通过；
+- FastAPI /health 返回 200，且 desktop_client=true、desktop_demo=true、control_plane_enabled=false；
+- 前端 http://127.0.0.1:1001 返回 200；
+- 前端 23 个测试文件、204 个测试通过；
+- npx tsc --noEmit 通过；
+- npm run build 通过；
+- 历史上曾生成 Windows x64 EXE，但不属于本次交付；本次只验证源码入口 `start.bat`、前端 1001 和后端 2001。
+
+开发测试补装 requirements-dev.txt 后，当前交付分支全量 Python 测试通过：
+- 依赖 work/ 阶段性证据目录的历史测试，在证据不存在时按明确原因跳过；
+- 与当前字幕强调逻辑相反的旧 overlay preview 断言已修正；
+- 常规用户只执行 start.bat 时不安装 requirements-dev.txt，这不阻止普通启动，但二开验收时必须额外安装开发依赖。
+
+本次交付以源码 ZIP 为准。若从 GitHub 接收，必须重新核对分支、commit、关键文件 hash 与 ZIP 一致后再使用，不要直接从旧的远端分支取代码。
+
+公司密钥的读取边界：公司电脑如果已经在 Windows 系统环境变量或用户环境变量中配置了公司凭据，启动脚本会优先保留这些非空变量；项目目录里的 `.env` 只作为没有配置时的回退。源码交付包不包含开发机 `.env`、`.env.production` 或 `.streamlit/secrets.toml`，因此“安装后直接用”依赖公司环境变量名称与 `.env.example` / 密钥边界清单一致，不能依赖我电脑上的个人配置。
+
+当前交付入口只有源码 ZIP：直接交付 `VideoInsight-source-handoff-company-env-2026-09-11.zip`，并同时交付包外 SHA256 记录。ZIP 中保留 start.bat、requirements 文件、package-lock.json、.env.example、data/templates/builtin.json、环境依赖说明和交接文档；旧的 `VideoInsight-company-configured-handoff-2026-09-11.zip` 不得交付。
+
+无论选择哪一种，都要在客户电脑上完成一次真实安装验收：双击 start.bat、确认前端页面、确认 /health、确认 FFmpeg、确认核心业务页面，再把验收电脑的系统版本、安装目录和结果记录下来。没有这一步，只能说“本机干净副本已通过”，不能承诺客户电脑必然通过。

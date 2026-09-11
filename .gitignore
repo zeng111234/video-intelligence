@@ -75,3 +75,16 @@ _diag_*.py
 
 # Shared-server bootstrap artifacts (machine-specific binaries and configs)
 /work/server-deploy-xmt/
+
+# 交付产物（0.2.52）：交付包是构建输出，不应进入版本库。
+# 源码包体积以百 MB 计且每次发布都会重生成，纳入 Git 只会让仓库膨胀、
+# 并造成"包内再含旧包"的自我包含问题。
+/交付文件/exports/*.zip
+/交付文件/exports/*.sha256.txt
+/交付文件/暂不交付-历史安装包/
+/交付文件/最终交付-*/
+# 历史安装包：体积数百 MB，且已标记"不得交付"，不应留在版本库。
+/交付文件/exports/*.exe
+
+# 根目录下的一次性排查脚本（开发机临时产物，不属于交付内容）
+/*.sh
