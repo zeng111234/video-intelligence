@@ -1082,6 +1082,18 @@ export interface CrawlerBatchResponse {
   copy_queries_executed?: number;
   /** 所有预设补充搜索词都已执行，仍可能不足目标数。 */
   copy_matrix_exhausted?: boolean;
+  /**
+   * 顺序采集排队态（0.2.52）。
+   *
+   * 同平台同一时间只允许一次真实采集。第二个任务此前会被记成 failed 批次，
+   * 文案是"正在顺序采集，请等待结束。"，用户看到的是"抓取失败"。现在这种
+   * 情况返回 waiting=true、status="pending"、error=null，并且不会创建批次。
+   */
+  waiting?: boolean;
+  waiting_reason?: string | null;
+  waiting_platforms?: string[];
+  waiting_remaining_seconds?: number;
+  waiting_retry_at?: string | null;
 }
 
 export interface CrawlerBatchListResponse {

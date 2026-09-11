@@ -316,6 +316,115 @@ function statusLabel(status: string) {
   return labels[status] || status;
 }
 
+/**
+ * 队列条目的真实状态文案（0.2.52）。
+ *
+ * 后端在 progress_stage / progress_message 里已经区分了"排队等待""异常恢复"
+ * "遇到验证码暂停"等状态，但页面此前只渲染 statusLabel(status)，于是这些
+ * 信息全部丢失：用户只看到"执行中"或"失败"，既不知道在等什么，也不知道
+ * 素材其实已经找到了一部分。
+ *
+ * 这里按"后端给的进度优先、状态兜底"的顺序还原成人话，覆盖需求里列出的
+ * 十种状态。后端 message 一律优先展示——它比前端的推断更准确。
+ */
+function queueItemStateText(item: CrawlerKeywordQueueItem): {
+  label: string;
+  color: string;
+  detail: string;
+} {
+  const stage = item.progress_stage || "";
+  const message = (item.progress_message || "").trim();
+  const platform = item.progress_platform ? materialPlatformLabel(item.progress_platform) : "";
+
+  // 后端明确给出的进度，优先原样展示。
+  if (stage === "recovering") {
+    return {
+      label: "上次异常中断，正在恢复",
+      color: "orange",
+      detail: message || "系统正在自动继续上次未完成的关键词。",
+    };
+  }
+  if (stage === "waiting") {
+    return {
+      label: "等待上一项完成",
+      color: "gold",
+      detail: message || "同一平台一次只抓取一项，上一项完成后会自动继续。",
+    };
+  }
+  if (stage === "opening_search") {
+    return {
+      label: platform ? `正在打开${platform}` : "正在打开浏览器",
+      color: "blue",
+      detail: message || "正在打开搜索页面，首次打开可能需要几十秒。",
+    };
+  }
+  if (stage === "waiting_login") {
+    return {
+      label: "等待用户登录",
+      color: "orange",
+      detail: message || "请在打开的窗口里完成扫码或人工验证，完成后会自动继续。",
+    };
+  }
+  if (stage === "safety_pause" || stage === "captcha") {
+    return {
+      label: "遇到验证码，已暂停",
+      color: "red",
+      detail: message || "平台要求验证，系统已暂停真实采集，避免账号风险。",
+    };
+  }
+  if (stage === "scanning" || stage === "platform_progress") {
+    const scanned = item.scanned_count ? `已扫描 ${item.scanned_count} 条` : "正在扫描";
+    const kept = item.retained_count ? `，已筛出 ${item.retained_count} 条` : "";
+    return {
+      label: platform ? `${platform}正在扫描` : "正在扫描",
+      color: "blue",
+      detail: message || `${scanned}${kept}。`,
+    };
+  }
+  if (stage === "platform_complete") {
+    return {
+      label: "抓取完成",
+      color: "green",
+      detail: message || `已扫描 ${item.scanned_count || 0} 条，筛出 ${item.retained_count || 0} 条。`,
+    };
+  }
+  if (stage === "failed") {
+    return {
+      label: "抓取失败，可重新执行",
+      color: "red",
+      detail: message || item.error || "本次没有抓取成功，可以重新执行。",
+    };
+  }
+
+  // 没有进度信息时按状态兜底。
+  switch (item.status) {
+    case "succeeded":
+      return { label: "抓取完成", color: "green", detail: message };
+    case "partial":
+      return { label: "部分完成", color: "orange", detail: message };
+    case "failed":
+      return {
+        label: "抓取失败，可重新执行",
+        color: "red",
+        detail: message || item.error || "本次没有抓取成功，可以重新执行。",
+      };
+    case "running":
+      return {
+        label: "正在抓取",
+        color: "blue",
+        detail: message || "正在抓取，请稍候。",
+      };
+    case "queued":
+      return {
+        label: "等待抓取",
+        color: "default",
+        detail: message || "排在前面的关键词完成后会自动开始。",
+      };
+    default:
+      return { label: statusLabel(item.status), color: "default", detail: message };
+  }
+}
+
 function formatNumber(value: number | null | undefined) {
   return value === null || value === undefined ? "未返回" : value.toLocaleString("zh-CN");
 }
@@ -921,6 +1030,31 @@ export default function KeywordCrawlerPage() {
     return () => window.clearInterval(timer);
   }, [keywordQueue, refreshKeywordQueue]);
 
+  // 页面刷新后必须从数据库恢复进度（0.2.52）。
+  //
+  // 此前 keywordQueue 只在用户点开"批量找素材"弹窗时才加载，刷新页面后
+  // 状态全丢，用户看到的是"什么都没有"，会以为任务没了或者自己去重开一次。
+  // 后端已经把队列持久化了，这里在挂载时主动恢复最近一条未结束的队列。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const queues = await listCrawlerKeywordQueues();
+        if (cancelled) return;
+        const active = queues.find((item) =>
+          ["queued", "running", "paused"].includes(item.status),
+        );
+        // 只恢复"还没结束"的队列；已完成的让它留在历史里，不主动弹窗打扰。
+        if (active) setKeywordQueue(active);
+      } catch {
+        // 恢复失败不影响页面其余功能；用户仍可手动打开弹窗查看。
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const handleKeywordQueueAction = async (
     action: "pause" | "resume" | "cancel",
   ) => {
@@ -1035,6 +1169,30 @@ export default function KeywordCrawlerPage() {
           message="页面暂时没有完全加载"
           description={initializationError}
           action={<Button size="small" onClick={retryInitialLoad}>重新加载</Button>}
+        />
+      )}
+
+      {/* 刷新页面后从数据库恢复的进行中批量任务。
+          不自动弹窗打扰，但必须在页面上看得见——否则用户刷新后会以为
+          任务丢了，甚至再建一批重复抓取。 */}
+      {keywordQueue && ["queued", "running", "paused"].includes(keywordQueue.status) && (
+        <Alert
+          className="crawler-active-queue-alert"
+          type={keywordQueue.status === "paused" ? "warning" : "info"}
+          showIcon
+          message={`批量找素材：已完成 ${keywordQueue.completed}/${keywordQueue.total} 个关键词 · ${statusLabel(keywordQueue.status)}`}
+          description={
+            keywordQueue.items.find((item) => item.status === "running")
+              ? queueItemStateText(
+                  keywordQueue.items.find((item) => item.status === "running")!,
+                ).detail
+              : "每个关键词完成后会自动保存；刷新页面也能继续查看。"
+          }
+          action={
+            <Button size="small" onClick={() => setKeywordQueueOpen(true)}>
+              查看进度
+            </Button>
+          }
         />
       )}
 
@@ -1352,15 +1510,34 @@ export default function KeywordCrawlerPage() {
               <List
                 size="small"
                 dataSource={keywordQueue.items}
-                renderItem={(item) => (
-                  <List.Item>
-                    <Space>
-                      <Tag color={STATUS_COLOR[item.status]}>{statusLabel(item.status)}</Tag>
-                      <Text>{item.keyword}</Text>
-                      {item.error && <Text type="danger">{item.error}</Text>}
-                    </Space>
-                  </List.Item>
-                )}
+                renderItem={(item) => {
+                  const state = queueItemStateText(item);
+                  const counts =
+                    item.scanned_count || item.retained_count
+                      ? `已扫描 ${item.scanned_count || 0} 条 · 已筛出 ${item.retained_count || 0} 条`
+                      : "";
+                  return (
+                    <List.Item>
+                      <Space direction="vertical" size={2} style={{ width: "100%" }}>
+                        <Space>
+                          <Tag color={state.color}>{state.label}</Tag>
+                          <Text>{item.keyword}</Text>
+                          {counts && <Text type="secondary">{counts}</Text>}
+                        </Space>
+                        {state.detail && (
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            {state.detail}
+                          </Text>
+                        )}
+                        {item.error && !state.detail.includes(item.error) && (
+                          <Text type="danger" style={{ fontSize: 12 }}>
+                            {item.error}
+                          </Text>
+                        )}
+                      </Space>
+                    </List.Item>
+                  );
+                }}
               />
               <Space>
                 {(keywordQueue.status === "queued" || (keywordQueue.status === "running" && keywordQueue.worker_active !== false)) && (

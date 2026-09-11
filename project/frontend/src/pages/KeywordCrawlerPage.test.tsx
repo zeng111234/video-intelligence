@@ -27,6 +27,7 @@ import type {
   CrawlerBatchResponse,
   CrawlerCandidateResult,
   CrawlerCapabilitiesResponse,
+  CrawlerKeywordQueueItem,
 } from "../api/types";
 
 vi.mock("../api/client", async () => {
@@ -1320,5 +1321,140 @@ describe("KeywordCrawlerPage performance behavior", () => {
     expect(screen.getByText("1/10")).toBeTruthy();
     expect(screen.getAllByText("美业老板怎么做IP").length).toBeGreaterThan(0);
     expect(screen.getAllByText(/另有 1 条待确认素材/).length).toBeGreaterThan(0);
+  });
+
+  // ------------------------------------------------------------------
+  // 0.2.52：刷新后从数据库恢复进度，并如实展示十种抓取状态
+  // ------------------------------------------------------------------
+
+  function activeQueue(
+    items: Array<Partial<CrawlerKeywordQueueItem>>,
+    status = "running",
+  ) {
+    return {
+      queue_id: "queue-refresh",
+      status,
+      platforms: ["douyin"],
+      published_window_days: 0,
+      count_per_platform: 30,
+      created_at: "2026-07-27T10:00:00+08:00",
+      updated_at: "2026-07-27T10:00:00+08:00",
+      finished_at: null,
+      total: items.length,
+      completed: 0,
+      queued: 0,
+      running: 1,
+      failed: 0,
+      worker_active: true,
+      message: null,
+      items: items.map((item, index) => ({
+        item_id: `item-${index}`,
+        keyword: item.keyword ?? `关键词${index}`,
+        status: "running",
+        batch_id: null,
+        error: null,
+        started_at: null,
+        finished_at: null,
+        ...item,
+      })),
+    };
+  }
+
+  it("restores an in-progress batch from the database after a page refresh", async () => {
+    // 刷新页面后 keywordQueue 之前是空的——用户会以为任务丢了。
+    vi.mocked(listCrawlerKeywordQueues).mockResolvedValue([
+      activeQueue([
+        {
+          keyword: "餐饮获客",
+          status: "running",
+          progress_stage: "scanning",
+          scanned_count: 42,
+          retained_count: 7,
+        },
+      ]),
+    ] as never);
+
+    renderPage();
+
+    const banner = await screen.findByText(/批量找素材：已完成 0\/1 个关键词/);
+    expect(banner).toBeTruthy();
+    expect(screen.getByRole("button", { name: "查看进度" })).toBeTruthy();
+    // 横幅先给出后端下发的进度说明。
+    expect(
+      screen.getAllByText(/已扫描 42 条/).length,
+    ).toBeGreaterThan(0);
+
+    // 弹窗里还要给出结构化的扫描/筛出计数。
+    fireEvent.click(screen.getByRole("button", { name: "查看进度" }));
+    expect(
+      (await screen.findAllByText(/已扫描 42 条 · 已筛出 7 条/)).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not surface a finished batch as an in-progress banner", async () => {
+    vi.mocked(listCrawlerKeywordQueues).mockResolvedValue([
+      activeQueue([{ keyword: "已完成的关键词", status: "succeeded" }], "succeeded"),
+    ] as never);
+
+    renderPage();
+
+    await screen.findByText("企业获客");
+    expect(screen.queryByText(/批量找素材：已完成/)).toBeNull();
+  });
+
+  it.each([
+    ["recovering", "上次异常中断，正在恢复"],
+    ["waiting", "等待上一项完成"],
+    ["opening_search", "正在打开"],
+    ["waiting_login", "等待用户登录"],
+    ["safety_pause", "遇到验证码，已暂停"],
+    ["scanning", "正在扫描"],
+    ["platform_complete", "抓取完成"],
+    ["failed", "抓取失败，可重新执行"],
+  ])("renders progress_stage %s as %s", async (stage, expected) => {
+    vi.mocked(listCrawlerKeywordQueues).mockResolvedValue([
+      activeQueue([
+        {
+          keyword: "状态关键词",
+          status: "running",
+          progress_stage: stage,
+          progress_message: `后端说明-${stage}`,
+          scanned_count: 3,
+          retained_count: 1,
+        },
+      ]),
+    ] as never);
+
+    renderPage();
+
+    await screen.findByText(/批量找素材：已完成/);
+    fireEvent.click(screen.getByRole("button", { name: "查看进度" }));
+
+    // 后端给的进度说明必须原样展示，不能被前端推断覆盖。
+    // 横幅与弹窗都会渲染这条说明，因此用 findAllByText。
+    expect(
+      (await screen.findAllByText(`后端说明-${stage}`)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(new RegExp(expected)).length).toBeGreaterThan(0);
+  });
+
+  it("labels a queued item as waiting to crawl", async () => {
+    vi.mocked(listCrawlerKeywordQueues).mockResolvedValue([
+      activeQueue([
+        {
+          keyword: "排在后面的关键词",
+          status: "queued",
+          progress_stage: "",
+          progress_message: null,
+        },
+      ]),
+    ] as never);
+
+    renderPage();
+
+    await screen.findByText(/批量找素材：已完成/);
+    fireEvent.click(screen.getByRole("button", { name: "查看进度" }));
+
+    expect((await screen.findAllByText("等待抓取")).length).toBeGreaterThan(0);
   });
 });
