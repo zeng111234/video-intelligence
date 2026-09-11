@@ -952,6 +952,15 @@ class ProviderSafetyState(BaseModel):
     rolling_window_started_at: datetime | None = None
     real_runs_in_window: int = Field(default=0, ge=0)
     updated_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())
+    # 租约归属与心跳（0.2.52）。
+    #
+    # 后端崩溃时 finally 不会执行，租约只能靠过期回收。这四个字段用于判断
+    # "持有租约的后端实例是否还活着"，从而只回收进程中断留下的运行租约。
+    # 它们与 blocked_until 无关：风控暂停记录不在这里清理。
+    backend_instance_id: str | None = None
+    queue_id: str | None = None
+    browser_pid: int | None = None
+    heartbeat_at: datetime | None = None
 
 
 class PublishSafetyState(BaseModel):

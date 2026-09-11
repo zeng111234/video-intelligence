@@ -450,6 +450,15 @@ class SQLiteRepository:
             "real_runs_in_window",
             "INTEGER NOT NULL DEFAULT 0",
         )
+        # 租约归属与心跳（0.2.52）：后端崩溃后无法执行 finally 释放，租约只能靠
+        # 过期回收。记录是谁持有的、心跳到什么时候，才能区分"进程已死留下的
+        # 运行租约"和"仍然活着的采集"，从而安全回收而不误杀正在跑的任务。
+        self._ensure_column(
+            "provider_safety_states", "backend_instance_id", "TEXT"
+        )
+        self._ensure_column("provider_safety_states", "queue_id", "TEXT")
+        self._ensure_column("provider_safety_states", "browser_pid", "INTEGER")
+        self._ensure_column("provider_safety_states", "heartbeat_at", "TEXT")
         # 旧库迁移：provider_request_guards 增加预计成本列（月上限原子统计用）
         self._ensure_column(
             "provider_request_guards", "cost", "TEXT NOT NULL DEFAULT '0'"
@@ -1767,7 +1776,8 @@ class SQLiteRepository:
             """
             SELECT provider, active_run_id, lease_expires_at, next_allowed_at,
                    blocked_until, blocked_reason, rolling_window_started_at,
-                   real_runs_in_window, updated_at
+                   real_runs_in_window, updated_at,
+                   backend_instance_id, queue_id, browser_pid, heartbeat_at
             FROM provider_safety_states WHERE provider = ?
             """,
             (provider,),
@@ -1800,6 +1810,16 @@ class SQLiteRepository:
             ),
             real_runs_in_window=int(row["real_runs_in_window"] or 0),
             updated_at=datetime.fromisoformat(str(row["updated_at"])),
+            backend_instance_id=row["backend_instance_id"],
+            queue_id=row["queue_id"],
+            browser_pid=(
+                int(row["browser_pid"]) if row["browser_pid"] is not None else None
+            ),
+            heartbeat_at=(
+                datetime.fromisoformat(str(row["heartbeat_at"]))
+                if row["heartbeat_at"]
+                else None
+            ),
         )
 
     def claim_provider_safety_lease(
@@ -1811,6 +1831,9 @@ class SQLiteRepository:
         lease_seconds: int,
         max_runs_in_window: int | None = None,
         rolling_window_seconds: int = 24 * 60 * 60,
+        backend_instance_id: str | None = None,
+        queue_id: str | None = None,
+        browser_pid: int | None = None,
     ) -> bool:
         """Atomically claim one provider-wide collection slot if it is safe."""
         connection = self.connection
@@ -1824,6 +1847,8 @@ class SQLiteRepository:
                 if state.next_allowed_at and state.next_allowed_at > now:
                     connection.rollback()
                     return False
+                # 只有"租约仍在有效期内"才互斥。过期租约（后端崩溃留下的）
+                # 必须放行，否则用户会被卡住一整个租约周期。
                 if (
                     state.active_run_id
                     and state.active_run_id != run_id
@@ -1852,14 +1877,19 @@ class SQLiteRepository:
                 INSERT INTO provider_safety_states(
                     provider, active_run_id, lease_expires_at, next_allowed_at,
                     blocked_until, blocked_reason, rolling_window_started_at,
-                    real_runs_in_window, updated_at
-                ) VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
+                    real_runs_in_window, updated_at,
+                    backend_instance_id, queue_id, browser_pid, heartbeat_at
+                ) VALUES (?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(provider) DO UPDATE SET
                     active_run_id = excluded.active_run_id,
                     lease_expires_at = excluded.lease_expires_at,
                     rolling_window_started_at = excluded.rolling_window_started_at,
                     real_runs_in_window = excluded.real_runs_in_window,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    backend_instance_id = excluded.backend_instance_id,
+                    queue_id = excluded.queue_id,
+                    browser_pid = excluded.browser_pid,
+                    heartbeat_at = excluded.heartbeat_at
                 """,
                 (
                     provider,
@@ -1868,6 +1898,10 @@ class SQLiteRepository:
                     next_window_start.isoformat(),
                     current_runs + 1,
                     now.isoformat(),
+                    backend_instance_id,
+                    queue_id,
+                    browser_pid,
+                    now.isoformat(),
                 ),
             )
             connection.commit()
@@ -1875,6 +1909,115 @@ class SQLiteRepository:
         except Exception:
             connection.rollback()
             raise
+
+    def renew_provider_safety_lease(
+        self,
+        *,
+        provider: str,
+        run_id: str,
+        now: datetime,
+        lease_seconds: int,
+        browser_pid: int | None = None,
+    ) -> bool:
+        """续租并刷新心跳；只有仍持有该租约的 run 才能续。
+
+        采集正常运行时每 30 秒调用一次。返回 False 说明租约已经不属于自己
+        （例如已被回收或过期被别人抢走），调用方应当停止而不是继续占用浏览器。
+        """
+        expires_at = now + timedelta(seconds=max(1, lease_seconds))
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                UPDATE provider_safety_states
+                SET lease_expires_at = ?, heartbeat_at = ?, updated_at = ?,
+                    browser_pid = COALESCE(?, browser_pid)
+                WHERE provider = ? AND active_run_id = ?
+                """,
+                (
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    now.isoformat(),
+                    browser_pid,
+                    provider,
+                    run_id,
+                ),
+            )
+        return bool(cursor.rowcount)
+
+    def reap_stale_provider_leases(
+        self,
+        *,
+        now: datetime,
+        live_backend_instance_ids: set[str] | None = None,
+    ) -> list[str]:
+        """回收因后端进程中断而作废的运行租约，返回被清理的 provider 列表。
+
+        只清 active_run_id / lease_expires_at / heartbeat_at 这些"运行中"字段：
+        绝不触碰 blocked_until 与 blocked_reason —— 24 小时风控暂停是平台风控
+        留下的真实结论，不能因为进程重启就当作脏数据删掉。
+
+        判定为作废需要同时满足：
+          1) 仍有 active_run_id（确实有租约挂着）；
+          2) 租约已过期，或持有它的后端实例已确认不在存活集合里；
+          3) 心跳已过期（没有活跃心跳，说明不是正在跑的采集）。
+        """
+        live = live_backend_instance_ids or set()
+        reaped: list[str] = []
+        rows = self.connection.execute(
+            """
+            SELECT provider, active_run_id, lease_expires_at, heartbeat_at,
+                   backend_instance_id
+            FROM provider_safety_states
+            WHERE active_run_id IS NOT NULL
+            """
+        ).fetchall()
+        for row in rows:
+            provider = str(row["provider"])
+            lease_expires_at = (
+                datetime.fromisoformat(str(row["lease_expires_at"]))
+                if row["lease_expires_at"]
+                else None
+            )
+            heartbeat_at = (
+                datetime.fromisoformat(str(row["heartbeat_at"]))
+                if row["heartbeat_at"]
+                else None
+            )
+            owner = row["backend_instance_id"]
+            lease_live = bool(lease_expires_at and lease_expires_at > now)
+            heartbeat_live = bool(heartbeat_at and heartbeat_at > now)
+            owner_alive = bool(owner) and str(owner) in live
+
+            # 判定顺序刻意从"最能证明它还活着"到"最能证明它已经死了"：
+            #
+            # 1) 持有者就是本进程，或心跳仍在跳 —— 明确活着，绝不动。
+            if owner_alive or heartbeat_live:
+                continue
+            # 2) 租约还没过期，且拿不到持有者身份 —— 无从证明它死了，保守保留。
+            #    （旧版本写入的租约没有 backend_instance_id。）
+            if lease_live and not owner:
+                continue
+            # 3) 租约还没过期，持有者身份已知但不在存活集合里 —— 只有调用方明确
+            #    给出了存活集合时才据此回收，避免把仍在运行的其他实例误杀。
+            if lease_live and owner and live and not owner_alive:
+                continue
+            with self.connection:
+                self.connection.execute(
+                    """
+                    UPDATE provider_safety_states
+                    SET active_run_id = NULL,
+                        lease_expires_at = NULL,
+                        heartbeat_at = NULL,
+                        browser_pid = NULL,
+                        backend_instance_id = NULL,
+                        queue_id = NULL,
+                        updated_at = ?
+                    WHERE provider = ? AND active_run_id = ?
+                    """,
+                    (now.isoformat(), provider, row["active_run_id"]),
+                )
+            reaped.append(provider)
+        return reaped
 
     def release_provider_safety_lease(
         self,
@@ -1930,7 +2073,25 @@ class SQLiteRepository:
                     blocked_reason = excluded.blocked_reason,
                     rolling_window_started_at = excluded.rolling_window_started_at,
                     real_runs_in_window = excluded.real_runs_in_window,
-                    updated_at = excluded.updated_at
+                    updated_at = excluded.updated_at,
+                    -- 正常释放时一并清掉归属与心跳，避免留下过期归属信息
+                    -- 让下次启动误判为"还有别的实例在跑"。
+                    backend_instance_id = CASE
+                        WHEN provider_safety_states.active_run_id = ? THEN NULL
+                        ELSE provider_safety_states.backend_instance_id
+                    END,
+                    queue_id = CASE
+                        WHEN provider_safety_states.active_run_id = ? THEN NULL
+                        ELSE provider_safety_states.queue_id
+                    END,
+                    browser_pid = CASE
+                        WHEN provider_safety_states.active_run_id = ? THEN NULL
+                        ELSE provider_safety_states.browser_pid
+                    END,
+                    heartbeat_at = CASE
+                        WHEN provider_safety_states.active_run_id = ? THEN NULL
+                        ELSE provider_safety_states.heartbeat_at
+                    END
                 """,
                 (
                     provider,
@@ -1942,6 +2103,10 @@ class SQLiteRepository:
                     else None,
                     current.real_runs_in_window if current else 0,
                     now.isoformat(),
+                    run_id,
+                    run_id,
+                    run_id,
+                    run_id,
                     run_id,
                     run_id,
                 ),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import contextvars
 import csv
 import inspect
 import io
@@ -206,7 +207,25 @@ def _browser_safety_policy_message() -> str:
             f"{BROWSER_MAX_REAL_RUNS_PER_WINDOW}次；遇到验证码或访问异常会自动暂停。"
         )
     return "同平台不额外冷却（同平台仍一次只运行一个任务）；遇到验证码或访问异常会自动暂停。"
-BROWSER_LEASE_SECONDS = 15 * 60
+# 浏览器采集租约（0.2.52）。
+#
+# 历史值 15 * 60：后端崩溃时 finally 不会执行，租约只能自然过期，用户最多要等
+# 15 分钟才能再次抓取，页面上表现为"抖音正在顺序采集，请等待结束"长时间不退。
+#
+# 现在租约只有 90 秒，采集期间每 30 秒续租一次（心跳）。进程正常结束时仍在
+# finally 里立即释放；进程崩溃则最多 90 秒自动失效。
+BROWSER_LEASE_SECONDS = 90
+BROWSER_LEASE_HEARTBEAT_SECONDS = 30
+
+# 本后端进程的身份标识：写进租约，重启后据此判断原持有者是否已经退出。
+BACKEND_INSTANCE_ID = f"backend-{os.getpid()}-{uuid4().hex[:8]}"
+
+# 当前正在执行的采集队列 id。队列消费者进入某项时设置，用于写进租约，
+# 便于排查"这条租约是哪次排队留下的"。采集链路嵌套很深，用 ContextVar
+# 传递比逐层加参数更安全。
+_ACTIVE_CRAWLER_QUEUE_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "active_crawler_queue_id", default=None
+)
 BROWSER_RESULT_LIMIT = 15
 # B站公开详情单次最多读取 10 条；按批次补全本次最多 100 条候选，避免
 # 后排结果因固定的首批上限全部显示为“未返回”。任一批失败即停止后续批次。
@@ -1700,11 +1719,18 @@ def _browser_provider_key(platform: Platform) -> str:
     return f"{platform.value}_browser_search"
 
 
-def _claim_browser_lease(platform: Platform, repo, now: datetime) -> str | None:
+def _claim_browser_lease(
+    platform: Platform,
+    repo,
+    now: datetime,
+    *,
+    queue_id: str | None = None,
+) -> str | None:
     """为平台的真实浏览器采集抢占租约（并发互斥 + 可选滚动次数上限）。
 
     返回租约 id 表示成功；返回 None 表示被限（冷却/运行中/管理员次数上限）。
-    调用方在 finally 中必须用同一租约 id 释放。
+    调用方在 finally 中必须用同一租约 id 释放，并在采集期间用
+    _browser_lease_heartbeat 续租。
     """
     lease_id = f"browser-{uuid4().hex}"
     if repo.claim_provider_safety_lease(
@@ -1714,9 +1740,55 @@ def _claim_browser_lease(platform: Platform, repo, now: datetime) -> str | None:
         lease_seconds=BROWSER_LEASE_SECONDS,
         max_runs_in_window=BROWSER_MAX_REAL_RUNS_PER_WINDOW,
         rolling_window_seconds=24 * 60 * 60,
+        backend_instance_id=BACKEND_INSTANCE_ID,
+        queue_id=queue_id if queue_id is not None else _ACTIVE_CRAWLER_QUEUE_ID.get(),
     ):
         return lease_id
     return None
+
+
+def _start_browser_lease_heartbeat(
+    repo,
+    platform: Platform,
+    lease_id: str,
+    *,
+    interval_seconds: int = BROWSER_LEASE_HEARTBEAT_SECONDS,
+) -> threading.Event:
+    """采集期间每 30 秒续租一次，返回用于停止心跳的 Event。
+
+    调用方必须在 finally 中 set() 这个 Event，否则线程会一直挂着。
+
+    续租失败说明租约已不再属于本进程（被回收，或过期后被别人抢走）。此时只记
+    一条日志并停止续租，不抛异常：真正的采集流程会自行走到 finally 释放租约，
+    强行中断反而会留下更乱的中间状态。
+    """
+    stop = threading.Event()
+    provider = _browser_provider_key(platform)
+
+    def renew() -> None:
+        while not stop.wait(interval_seconds):
+            try:
+                renewed = repo.renew_provider_safety_lease(
+                    provider=provider,
+                    run_id=lease_id,
+                    now=datetime.now().astimezone(),
+                    lease_seconds=BROWSER_LEASE_SECONDS,
+                )
+            except Exception as exc:  # noqa: BLE001 - 续租失败不能拖垮采集
+                logger.warning("浏览器租约续租异常：%s", exc)
+                return
+            if not renewed:
+                logger.warning(
+                    "浏览器租约已失效，停止续租：provider=%s run_id=%s",
+                    provider,
+                    lease_id,
+                )
+                return
+
+    threading.Thread(
+        target=renew, name="browser-lease-heartbeat", daemon=True
+    ).start()
+    return stop
 
 
 def _browser_safety_status(platform: Platform, repo) -> CrawlerSafetyStatus:
@@ -2487,11 +2559,21 @@ def _execute_free_multi_platform_batch(
         # 缓存命中不占用配额。被限时跳过该平台并提示，不影响其他平台。
         lease_id: str | None = None
         if not cache_hit:
-            lease_id = _claim_browser_lease(platform, repo, datetime.now().astimezone())
+            lease_id = _claim_browser_lease(
+                platform,
+                repo,
+                datetime.now().astimezone(),
+            )
             if lease_id is None:
                 errors.append(_browser_safety_status(platform, repo).message)
                 return None
         batch: SearchBatch | None = None
+        # 采集期间每 30 秒续租，避免长采集被 90 秒租约自己过期打断。
+        lease_heartbeat_stop: threading.Event | None = (
+            _start_browser_lease_heartbeat(repo, platform, lease_id)
+            if lease_id is not None
+            else None
+        )
         try:
             # 快手公开搜索页没有可验证的发布时间筛选。不要把通用时间条件
             # 伪装成平台筛选，否则会因卡片时间缺失而错误丢弃候选。
@@ -2523,6 +2605,8 @@ def _execute_free_multi_platform_batch(
             errors.append(str(exc))
             return None
         finally:
+            if lease_heartbeat_stop is not None:
+                lease_heartbeat_stop.set()
             if lease_id is not None:
                 error_text = batch.error if batch is not None else ""
                 is_safety_event = _browser_safety_event(error_text)
