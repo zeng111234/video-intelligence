@@ -1,0 +1,28 @@
+{
+  "asset_id": "sfx-kenney-interface-tick_004",
+  "kind": "sound_effect",
+  "name": "kenney-interface-tick_004",
+  "display_name_zh": "音效_短促节拍_界面包_004",
+  "description_zh": "短促节拍类候选音效；用途根据原作者文件分类推断，尚未试听。",
+  "tags_zh": [
+    "短促节拍",
+    "音效"
+  ],
+  "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。",
+  "review_status": "decoded_not_auditioned",
+  "stored_name": "sfx-kenney-tick_004.wav",
+  "media_type": "audio/wav",
+  "source_provider": "Kenney",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_cc0_asset",
+  "rights_holder": "Kenney",
+  "authorization_status": "confirmed",
+  "rights_status": "cc0_public_domain",
+  "publish_licensed": true,
+  "license_name": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "source_url": "https://kenney.nl/assets/interface-sounds",
+  "sha256": "4fa00316878af9d96ad56739d0fb00f000d17c1db875a7d7e75d691cc3521e65",
+  "duration_seconds": 0.0552,
+  "suggested_category": "tick"
+}

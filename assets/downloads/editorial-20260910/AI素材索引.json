@@ -1,0 +1,2987 @@
+[
+  {
+    "id": "kenney-interface-back_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_返回退出_界面包_001",
+    "description_zh": "返回退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "返回退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-back_001.wav",
+    "named_file": "中文命名/音效/音效_返回退出_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-back_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_返回退出_界面包_002",
+    "description_zh": "返回退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "返回退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-back_002.wav",
+    "named_file": "中文命名/音效/音效_返回退出_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-back_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_返回退出_界面包_003",
+    "description_zh": "返回退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "返回退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-back_003.wav",
+    "named_file": "中文命名/音效/音效_返回退出_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-back_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_返回退出_界面包_004",
+    "description_zh": "返回退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "返回退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-back_004.wav",
+    "named_file": "中文命名/音效/音效_返回退出_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-bong_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_敲击提示_界面包_001",
+    "description_zh": "敲击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "敲击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-bong_001.wav",
+    "named_file": "中文命名/音效/音效_敲击提示_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-click_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_界面包_001",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-click_001.wav",
+    "named_file": "中文命名/音效/音效_点击提示_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-click_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_界面包_002",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-click_002.wav",
+    "named_file": "中文命名/音效/音效_点击提示_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-click_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_界面包_003",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-click_003.wav",
+    "named_file": "中文命名/音效/音效_点击提示_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-click_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_界面包_004",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-click_004.wav",
+    "named_file": "中文命名/音效/音效_点击提示_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-click_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_界面包_005",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-click_005.wav",
+    "named_file": "中文命名/音效/音效_点击提示_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-close_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_关闭退出_界面包_001",
+    "description_zh": "关闭退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "关闭退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-close_001.wav",
+    "named_file": "中文命名/音效/音效_关闭退出_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-close_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_关闭退出_界面包_002",
+    "description_zh": "关闭退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "关闭退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-close_002.wav",
+    "named_file": "中文命名/音效/音效_关闭退出_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-close_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_关闭退出_界面包_003",
+    "description_zh": "关闭退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "关闭退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-close_003.wav",
+    "named_file": "中文命名/音效/音效_关闭退出_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-close_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_关闭退出_界面包_004",
+    "description_zh": "关闭退出类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "关闭退出",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-close_004.wav",
+    "named_file": "中文命名/音效/音效_关闭退出_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-confirmation_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_确认成功_界面包_001",
+    "description_zh": "确认成功类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "确认成功",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-confirmation_001.wav",
+    "named_file": "中文命名/音效/音效_确认成功_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-confirmation_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_确认成功_界面包_002",
+    "description_zh": "确认成功类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "确认成功",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-confirmation_002.wav",
+    "named_file": "中文命名/音效/音效_确认成功_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-confirmation_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_确认成功_界面包_003",
+    "description_zh": "确认成功类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "确认成功",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-confirmation_003.wav",
+    "named_file": "中文命名/音效/音效_确认成功_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-confirmation_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_确认成功_界面包_004",
+    "description_zh": "确认成功类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "确认成功",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-confirmation_004.wav",
+    "named_file": "中文命名/音效/音效_确认成功_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-drop_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_落下提示_界面包_001",
+    "description_zh": "落下提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "落下提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-drop_001.wav",
+    "named_file": "中文命名/音效/音效_落下提示_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-drop_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_落下提示_界面包_002",
+    "description_zh": "落下提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "落下提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-drop_002.wav",
+    "named_file": "中文命名/音效/音效_落下提示_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-drop_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_落下提示_界面包_003",
+    "description_zh": "落下提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "落下提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-drop_003.wav",
+    "named_file": "中文命名/音效/音效_落下提示_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-drop_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_落下提示_界面包_004",
+    "description_zh": "落下提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "落下提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-drop_004.wav",
+    "named_file": "中文命名/音效/音效_落下提示_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_001",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_001.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_002",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_002.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_003",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_003.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_004",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_004.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_005",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_005.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_006",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_006",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_006.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_007",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_007",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_007.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_007.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-error_008",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_错误警示_界面包_008",
+    "description_zh": "错误警示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "错误警示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-error_008.wav",
+    "named_file": "中文命名/音效/音效_错误警示_界面包_008.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glass_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_玻璃音色_界面包_001",
+    "description_zh": "玻璃音色类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "玻璃音色",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glass_001.wav",
+    "named_file": "中文命名/音效/音效_玻璃音色_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glass_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_玻璃音色_界面包_002",
+    "description_zh": "玻璃音色类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "玻璃音色",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glass_002.wav",
+    "named_file": "中文命名/音效/音效_玻璃音色_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glass_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_玻璃音色_界面包_003",
+    "description_zh": "玻璃音色类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "玻璃音色",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glass_003.wav",
+    "named_file": "中文命名/音效/音效_玻璃音色_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glass_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_玻璃音色_界面包_004",
+    "description_zh": "玻璃音色类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "玻璃音色",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glass_004.wav",
+    "named_file": "中文命名/音效/音效_玻璃音色_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glass_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_玻璃音色_界面包_005",
+    "description_zh": "玻璃音色类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "玻璃音色",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glass_005.wav",
+    "named_file": "中文命名/音效/音效_玻璃音色_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glass_006",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_玻璃音色_界面包_006",
+    "description_zh": "玻璃音色类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "玻璃音色",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glass_006.wav",
+    "named_file": "中文命名/音效/音效_玻璃音色_界面包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glitch_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_故障效果_界面包_001",
+    "description_zh": "故障效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "故障效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glitch_001.wav",
+    "named_file": "中文命名/音效/音效_故障效果_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glitch_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_故障效果_界面包_002",
+    "description_zh": "故障效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "故障效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glitch_002.wav",
+    "named_file": "中文命名/音效/音效_故障效果_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glitch_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_故障效果_界面包_003",
+    "description_zh": "故障效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "故障效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glitch_003.wav",
+    "named_file": "中文命名/音效/音效_故障效果_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-glitch_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_故障效果_界面包_004",
+    "description_zh": "故障效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "故障效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-glitch_004.wav",
+    "named_file": "中文命名/音效/音效_故障效果_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_001",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_001.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_002",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_002.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_003",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_003.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_004",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_004.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_005",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_005.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_006",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_006",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_006.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_007",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_007",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_007.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_007.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_008",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_008",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_008.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_008.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-maximize_009",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_放大展开_界面包_009",
+    "description_zh": "放大展开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "放大展开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-maximize_009.wav",
+    "named_file": "中文命名/音效/音效_放大展开_界面包_009.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_001",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_001.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_002",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_002.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_003",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_003.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_004",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_004.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_005",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_005.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_006",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_006",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_006.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_007",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_007",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_007.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_007.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_008",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_008",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_008.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_008.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-minimize_009",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_缩小收起_界面包_009",
+    "description_zh": "缩小收起类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "缩小收起",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-minimize_009.wav",
+    "named_file": "中文命名/音效/音效_缩小收起_界面包_009.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-open_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_打开入场_界面包_001",
+    "description_zh": "打开入场类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "打开入场",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-open_001.wav",
+    "named_file": "中文命名/音效/音效_打开入场_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-open_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_打开入场_界面包_002",
+    "description_zh": "打开入场类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "打开入场",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-open_002.wav",
+    "named_file": "中文命名/音效/音效_打开入场_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-open_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_打开入场_界面包_003",
+    "description_zh": "打开入场类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "打开入场",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-open_003.wav",
+    "named_file": "中文命名/音效/音效_打开入场_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-open_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_打开入场_界面包_004",
+    "description_zh": "打开入场类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "打开入场",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-open_004.wav",
+    "named_file": "中文命名/音效/音效_打开入场_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-pluck_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_拨弦提示_界面包_001",
+    "description_zh": "拨弦提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "拨弦提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-pluck_001.wav",
+    "named_file": "中文命名/音效/音效_拨弦提示_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-pluck_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_拨弦提示_界面包_002",
+    "description_zh": "拨弦提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "拨弦提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-pluck_002.wav",
+    "named_file": "中文命名/音效/音效_拨弦提示_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-question_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_疑问提示_界面包_001",
+    "description_zh": "疑问提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "疑问提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-question_001.wav",
+    "named_file": "中文命名/音效/音效_疑问提示_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-question_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_疑问提示_界面包_002",
+    "description_zh": "疑问提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "疑问提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-question_002.wav",
+    "named_file": "中文命名/音效/音效_疑问提示_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-question_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_疑问提示_界面包_003",
+    "description_zh": "疑问提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "疑问提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-question_003.wav",
+    "named_file": "中文命名/音效/音效_疑问提示_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-question_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_疑问提示_界面包_004",
+    "description_zh": "疑问提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "疑问提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-question_004.wav",
+    "named_file": "中文命名/音效/音效_疑问提示_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scratch_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_刮擦效果_界面包_001",
+    "description_zh": "刮擦效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "刮擦效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scratch_001.wav",
+    "named_file": "中文命名/音效/音效_刮擦效果_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scratch_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_刮擦效果_界面包_002",
+    "description_zh": "刮擦效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "刮擦效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scratch_002.wav",
+    "named_file": "中文命名/音效/音效_刮擦效果_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scratch_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_刮擦效果_界面包_003",
+    "description_zh": "刮擦效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "刮擦效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scratch_003.wav",
+    "named_file": "中文命名/音效/音效_刮擦效果_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scratch_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_刮擦效果_界面包_004",
+    "description_zh": "刮擦效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "刮擦效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scratch_004.wav",
+    "named_file": "中文命名/音效/音效_刮擦效果_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scratch_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_刮擦效果_界面包_005",
+    "description_zh": "刮擦效果类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "刮擦效果",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scratch_005.wav",
+    "named_file": "中文命名/音效/音效_刮擦效果_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scroll_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_滚动切换_界面包_001",
+    "description_zh": "滚动切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "滚动切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scroll_001.wav",
+    "named_file": "中文命名/音效/音效_滚动切换_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scroll_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_滚动切换_界面包_002",
+    "description_zh": "滚动切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "滚动切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scroll_002.wav",
+    "named_file": "中文命名/音效/音效_滚动切换_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scroll_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_滚动切换_界面包_003",
+    "description_zh": "滚动切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "滚动切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scroll_003.wav",
+    "named_file": "中文命名/音效/音效_滚动切换_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scroll_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_滚动切换_界面包_004",
+    "description_zh": "滚动切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "滚动切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scroll_004.wav",
+    "named_file": "中文命名/音效/音效_滚动切换_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-scroll_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_滚动切换_界面包_005",
+    "description_zh": "滚动切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "滚动切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-scroll_005.wav",
+    "named_file": "中文命名/音效/音效_滚动切换_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_001",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_001.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_002",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_002.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_003",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_003.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_004",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_004.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_005",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_005.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_006",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_006",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_006.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_007",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_007",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_007.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_007.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-select_008",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_选择提示_界面包_008",
+    "description_zh": "选择提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "选择提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-select_008.wav",
+    "named_file": "中文命名/音效/音效_选择提示_界面包_008.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-switch_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_界面包_001",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-switch_001.wav",
+    "named_file": "中文命名/音效/音效_开关切换_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-switch_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_界面包_002",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-switch_002.wav",
+    "named_file": "中文命名/音效/音效_开关切换_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-switch_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_界面包_003",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-switch_003.wav",
+    "named_file": "中文命名/音效/音效_开关切换_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-switch_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_界面包_004",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-switch_004.wav",
+    "named_file": "中文命名/音效/音效_开关切换_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-switch_005",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_界面包_005",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-switch_005.wav",
+    "named_file": "中文命名/音效/音效_开关切换_界面包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-switch_006",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_界面包_006",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-switch_006.wav",
+    "named_file": "中文命名/音效/音效_开关切换_界面包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-switch_007",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_界面包_007",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-switch_007.wav",
+    "named_file": "中文命名/音效/音效_开关切换_界面包_007.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-tick_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_短促节拍_界面包_001",
+    "description_zh": "短促节拍类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "短促节拍",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-tick_001.wav",
+    "named_file": "中文命名/音效/音效_短促节拍_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-tick_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_短促节拍_界面包_002",
+    "description_zh": "短促节拍类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "短促节拍",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-tick_002.wav",
+    "named_file": "中文命名/音效/音效_短促节拍_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-tick_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_短促节拍_界面包_004",
+    "description_zh": "短促节拍类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "短促节拍",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-tick_004.wav",
+    "named_file": "中文命名/音效/音效_短促节拍_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-toggle_001",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_状态切换_界面包_001",
+    "description_zh": "状态切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "状态切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-toggle_001.wav",
+    "named_file": "中文命名/音效/音效_状态切换_界面包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-toggle_002",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_状态切换_界面包_002",
+    "description_zh": "状态切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "状态切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-toggle_002.wav",
+    "named_file": "中文命名/音效/音效_状态切换_界面包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-toggle_003",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_状态切换_界面包_003",
+    "description_zh": "状态切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "状态切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-toggle_003.wav",
+    "named_file": "中文命名/音效/音效_状态切换_界面包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-interface-toggle_004",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_状态切换_界面包_004",
+    "description_zh": "状态切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "状态切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-interface-toggle_004.wav",
+    "named_file": "中文命名/音效/音效_状态切换_界面包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-click1",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_操作包_001",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-click1.wav",
+    "named_file": "中文命名/音效/音效_点击提示_操作包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-click2",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_操作包_002",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-click2.wav",
+    "named_file": "中文命名/音效/音效_点击提示_操作包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-click3",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_操作包_003",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-click3.wav",
+    "named_file": "中文命名/音效/音效_点击提示_操作包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-click4",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_操作包_004",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-click4.wav",
+    "named_file": "中文命名/音效/音效_点击提示_操作包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-click5",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_点击提示_操作包_005",
+    "description_zh": "点击提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "点击提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-click5.wav",
+    "named_file": "中文命名/音效/音效_点击提示_操作包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-mouseclick1",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_鼠标点击_操作包_001",
+    "description_zh": "鼠标点击类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "鼠标点击",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-mouseclick1.wav",
+    "named_file": "中文命名/音效/音效_鼠标点击_操作包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-mouserelease1",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_鼠标松开_操作包_001",
+    "description_zh": "鼠标松开类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "鼠标松开",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-mouserelease1.wav",
+    "named_file": "中文命名/音效/音效_鼠标松开_操作包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-rollover1",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_悬停提示_操作包_001",
+    "description_zh": "悬停提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "悬停提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-rollover1.wav",
+    "named_file": "中文命名/音效/音效_悬停提示_操作包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-rollover2",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_悬停提示_操作包_002",
+    "description_zh": "悬停提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "悬停提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-rollover2.wav",
+    "named_file": "中文命名/音效/音效_悬停提示_操作包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-rollover3",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_悬停提示_操作包_003",
+    "description_zh": "悬停提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "悬停提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-rollover3.wav",
+    "named_file": "中文命名/音效/音效_悬停提示_操作包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-rollover4",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_悬停提示_操作包_004",
+    "description_zh": "悬停提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "悬停提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-rollover4.wav",
+    "named_file": "中文命名/音效/音效_悬停提示_操作包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-rollover5",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_悬停提示_操作包_005",
+    "description_zh": "悬停提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "悬停提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-rollover5.wav",
+    "named_file": "中文命名/音效/音效_悬停提示_操作包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-rollover6",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_悬停提示_操作包_006",
+    "description_zh": "悬停提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "悬停提示",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-rollover6.wav",
+    "named_file": "中文命名/音效/音效_悬停提示_操作包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch1",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_001",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch1.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_001.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch10",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_010",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch10.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_010.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch11",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_011",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch11.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_011.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch12",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_012",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch12.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_012.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch13",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_013",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch13.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_013.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch14",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_014",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch14.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_014.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch15",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_015",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch15.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_015.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch16",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_016",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch16.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_016.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch17",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_017",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch17.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_017.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch18",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_018",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch18.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_018.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch19",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_019",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch19.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_019.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch2",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_002",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch2.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_002.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch20",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_020",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch20.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_020.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch21",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_021",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch21.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_021.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch22",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_022",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch22.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_022.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch23",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_023",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch23.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_023.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch24",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_024",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch24.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_024.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch25",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_025",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch25.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_025.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch26",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_026",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch26.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_026.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch27",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_027",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch27.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_027.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch28",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_028",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch28.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_028.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch29",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_029",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch29.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_029.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch3",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_003",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch3.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_003.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch30",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_030",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch30.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_030.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch31",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_031",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch31.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_031.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch32",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_032",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch32.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_032.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch33",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_033",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch33.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_033.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch34",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_034",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch34.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_034.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch35",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_035",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch35.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_035.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch36",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_036",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch36.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_036.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch37",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_037",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch37.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_037.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch38",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_038",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch38.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_038.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch4",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_004",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch4.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_004.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch5",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_005",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch5.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_005.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch6",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_006",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch6.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_006.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch7",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_007",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch7.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_007.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch8",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_008",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch8.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_008.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "kenney-ui-switch9",
+    "kind": "sound_effect",
+    "display_name_zh": "音效_开关切换_操作包_009",
+    "description_zh": "开关切换类候选音效；用途根据原作者文件分类推断，尚未试听。",
+    "tags_zh": [
+      "开关切换",
+      "音效"
+    ],
+    "file": "sounds-wav/kenney-ui-switch9.wav",
+    "named_file": "中文命名/音效/音效_开关切换_操作包_009.wav",
+    "review_status": "decoded_not_auditioned",
+    "license": "CC0-1.0",
+    "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。"
+  },
+  {
+    "id": "alarm",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_闹钟提醒_彩色矢量",
+    "description_zh": "闹钟提醒静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "闹钟提醒",
+      "贴纸"
+    ],
+    "file": "stickers/alarm.svg",
+    "named_file": "中文命名/贴纸/贴纸_闹钟提醒_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "announcement",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_宣传喇叭_彩色矢量",
+    "description_zh": "宣传喇叭静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "宣传喇叭",
+      "贴纸"
+    ],
+    "file": "stickers/announcement.svg",
+    "named_file": "中文命名/贴纸/贴纸_宣传喇叭_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "attention",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_重点感叹号_彩色矢量",
+    "description_zh": "重点感叹号静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "重点感叹号",
+      "贴纸"
+    ],
+    "file": "stickers/attention.svg",
+    "named_file": "中文命名/贴纸/贴纸_重点感叹号_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "banknotes",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_纸币现金_彩色矢量",
+    "description_zh": "纸币现金静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "纸币现金",
+      "贴纸"
+    ],
+    "file": "stickers/banknotes.svg",
+    "named_file": "中文命名/贴纸/贴纸_纸币现金_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "bell",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_通知铃铛_彩色矢量",
+    "description_zh": "通知铃铛静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "通知铃铛",
+      "贴纸"
+    ],
+    "file": "stickers/bell.svg",
+    "named_file": "中文命名/贴纸/贴纸_通知铃铛_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "calendar",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_日历日期_彩色矢量",
+    "description_zh": "日历日期静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "日历日期",
+      "贴纸"
+    ],
+    "file": "stickers/calendar.svg",
+    "named_file": "中文命名/贴纸/贴纸_日历日期_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "cancel",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_取消叉号_彩色矢量",
+    "description_zh": "取消叉号静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "取消叉号",
+      "贴纸"
+    ],
+    "file": "stickers/cancel.svg",
+    "named_file": "中文命名/贴纸/贴纸_取消叉号_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "celebration",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_庆祝礼花_彩色矢量",
+    "description_zh": "庆祝礼花静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "庆祝礼花",
+      "贴纸"
+    ],
+    "file": "stickers/celebration.svg",
+    "named_file": "中文命名/贴纸/贴纸_庆祝礼花_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "chart",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_数据图表_彩色矢量",
+    "description_zh": "数据图表静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "数据图表",
+      "贴纸"
+    ],
+    "file": "stickers/chart.svg",
+    "named_file": "中文命名/贴纸/贴纸_数据图表_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "chat",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_聊天对话_彩色矢量",
+    "description_zh": "聊天对话静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "聊天对话",
+      "贴纸"
+    ],
+    "file": "stickers/chat.svg",
+    "named_file": "中文命名/贴纸/贴纸_聊天对话_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "clipboard",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_任务清单_彩色矢量",
+    "description_zh": "任务清单静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "任务清单",
+      "贴纸"
+    ],
+    "file": "stickers/clipboard.svg",
+    "named_file": "中文命名/贴纸/贴纸_任务清单_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "confirm",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_确认对勾_彩色矢量",
+    "description_zh": "确认对勾静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "确认对勾",
+      "贴纸"
+    ],
+    "file": "stickers/confirm.svg",
+    "named_file": "中文命名/贴纸/贴纸_确认对勾_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "customers",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_客户人群_彩色矢量",
+    "description_zh": "客户人群静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "客户人群",
+      "贴纸"
+    ],
+    "file": "stickers/customers.svg",
+    "named_file": "中文命名/贴纸/贴纸_客户人群_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "decline",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_下降趋势_彩色矢量",
+    "description_zh": "下降趋势静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "下降趋势",
+      "贴纸"
+    ],
+    "file": "stickers/decline.svg",
+    "named_file": "中文命名/贴纸/贴纸_下降趋势_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "email",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_邮件_彩色矢量",
+    "description_zh": "邮件静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "邮件",
+      "贴纸"
+    ],
+    "file": "stickers/email.svg",
+    "named_file": "中文命名/贴纸/贴纸_邮件_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "factory",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_工厂生产_彩色矢量",
+    "description_zh": "工厂生产静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "工厂生产",
+      "贴纸"
+    ],
+    "file": "stickers/factory.svg",
+    "named_file": "中文命名/贴纸/贴纸_工厂生产_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "fire",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_热度火焰_彩色矢量",
+    "description_zh": "热度火焰静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "热度火焰",
+      "贴纸"
+    ],
+    "file": "stickers/fire.svg",
+    "named_file": "中文命名/贴纸/贴纸_热度火焰_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "folder",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_资料文件夹_彩色矢量",
+    "description_zh": "资料文件夹静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "资料文件夹",
+      "贴纸"
+    ],
+    "file": "stickers/folder.svg",
+    "named_file": "中文命名/贴纸/贴纸_资料文件夹_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "gift",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_赠品礼物_彩色矢量",
+    "description_zh": "赠品礼物静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "赠品礼物",
+      "贴纸"
+    ],
+    "file": "stickers/gift.svg",
+    "named_file": "中文命名/贴纸/贴纸_赠品礼物_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "growth",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_增长趋势_彩色矢量",
+    "description_zh": "增长趋势静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "增长趋势",
+      "贴纸"
+    ],
+    "file": "stickers/growth.svg",
+    "named_file": "中文命名/贴纸/贴纸_增长趋势_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "handshake",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_合作握手_彩色矢量",
+    "description_zh": "合作握手静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "合作握手",
+      "贴纸"
+    ],
+    "file": "stickers/handshake.svg",
+    "named_file": "中文命名/贴纸/贴纸_合作握手_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "hourglass",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_等待沙漏_彩色矢量",
+    "description_zh": "等待沙漏静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "等待沙漏",
+      "贴纸"
+    ],
+    "file": "stickers/hourglass.svg",
+    "named_file": "中文命名/贴纸/贴纸_等待沙漏_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "idea",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_灵感灯泡_彩色矢量",
+    "description_zh": "灵感灯泡静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "灵感灯泡",
+      "贴纸"
+    ],
+    "file": "stickers/idea.svg",
+    "named_file": "中文命名/贴纸/贴纸_灵感灯泡_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "key",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_钥匙权限_彩色矢量",
+    "description_zh": "钥匙权限静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "钥匙权限",
+      "贴纸"
+    ],
+    "file": "stickers/key.svg",
+    "named_file": "中文命名/贴纸/贴纸_钥匙权限_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "label",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_价格标签_彩色矢量",
+    "description_zh": "价格标签静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "价格标签",
+      "贴纸"
+    ],
+    "file": "stickers/label.svg",
+    "named_file": "中文命名/贴纸/贴纸_价格标签_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "laptop",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_笔记本电脑_彩色矢量",
+    "description_zh": "笔记本电脑静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "笔记本电脑",
+      "贴纸"
+    ],
+    "file": "stickers/laptop.svg",
+    "named_file": "中文命名/贴纸/贴纸_笔记本电脑_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "link",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_链接关联_彩色矢量",
+    "description_zh": "链接关联静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "链接关联",
+      "贴纸"
+    ],
+    "file": "stickers/link.svg",
+    "named_file": "中文命名/贴纸/贴纸_链接关联_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "location",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_地点定位_彩色矢量",
+    "description_zh": "地点定位静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "地点定位",
+      "贴纸"
+    ],
+    "file": "stickers/location.svg",
+    "named_file": "中文命名/贴纸/贴纸_地点定位_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "lock",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_安全锁_彩色矢量",
+    "description_zh": "安全锁静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "安全锁",
+      "贴纸"
+    ],
+    "file": "stickers/lock.svg",
+    "named_file": "中文命名/贴纸/贴纸_安全锁_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "memo",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_记录文案_彩色矢量",
+    "description_zh": "记录文案静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "记录文案",
+      "贴纸"
+    ],
+    "file": "stickers/memo.svg",
+    "named_file": "中文命名/贴纸/贴纸_记录文案_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "money-bag",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_金额钱袋_彩色矢量",
+    "description_zh": "金额钱袋静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "金额钱袋",
+      "贴纸"
+    ],
+    "file": "stickers/money-bag.svg",
+    "named_file": "中文命名/贴纸/贴纸_金额钱袋_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "package",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_包裹商品_彩色矢量",
+    "description_zh": "包裹商品静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "包裹商品",
+      "贴纸"
+    ],
+    "file": "stickers/package.svg",
+    "named_file": "中文命名/贴纸/贴纸_包裹商品_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "payment-card",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_支付银行卡_彩色矢量",
+    "description_zh": "支付银行卡静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "支付银行卡",
+      "贴纸"
+    ],
+    "file": "stickers/payment-card.svg",
+    "named_file": "中文命名/贴纸/贴纸_支付银行卡_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "phone",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_手机_彩色矢量",
+    "description_zh": "手机静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "手机",
+      "贴纸"
+    ],
+    "file": "stickers/phone.svg",
+    "named_file": "中文命名/贴纸/贴纸_手机_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "question",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_疑问问号_彩色矢量",
+    "description_zh": "疑问问号静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "疑问问号",
+      "贴纸"
+    ],
+    "file": "stickers/question.svg",
+    "named_file": "中文命名/贴纸/贴纸_疑问问号_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "repeat",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_循环重复_彩色矢量",
+    "description_zh": "循环重复静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "循环重复",
+      "贴纸"
+    ],
+    "file": "stickers/repeat.svg",
+    "named_file": "中文命名/贴纸/贴纸_循环重复_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "right-arrow",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_向右箭头_彩色矢量",
+    "description_zh": "向右箭头静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "向右箭头",
+      "贴纸"
+    ],
+    "file": "stickers/right-arrow.svg",
+    "named_file": "中文命名/贴纸/贴纸_向右箭头_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "rocket",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_启动火箭_彩色矢量",
+    "description_zh": "启动火箭静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "启动火箭",
+      "贴纸"
+    ],
+    "file": "stickers/rocket.svg",
+    "named_file": "中文命名/贴纸/贴纸_启动火箭_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "search",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_搜索查找_彩色矢量",
+    "description_zh": "搜索查找静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "搜索查找",
+      "贴纸"
+    ],
+    "file": "stickers/search.svg",
+    "named_file": "中文命名/贴纸/贴纸_搜索查找_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "shopping-cart",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_购物车_彩色矢量",
+    "description_zh": "购物车静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "购物车",
+      "贴纸"
+    ],
+    "file": "stickers/shopping-cart.svg",
+    "named_file": "中文命名/贴纸/贴纸_购物车_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "sparkles",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_闪光强调_彩色矢量",
+    "description_zh": "闪光强调静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "闪光强调",
+      "贴纸"
+    ],
+    "file": "stickers/sparkles.svg",
+    "named_file": "中文命名/贴纸/贴纸_闪光强调_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "star",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_星级亮点_彩色矢量",
+    "description_zh": "星级亮点静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "星级亮点",
+      "贴纸"
+    ],
+    "file": "stickers/star.svg",
+    "named_file": "中文命名/贴纸/贴纸_星级亮点_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "store",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_门店商铺_彩色矢量",
+    "description_zh": "门店商铺静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "门店商铺",
+      "贴纸"
+    ],
+    "file": "stickers/store.svg",
+    "named_file": "中文命名/贴纸/贴纸_门店商铺_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "target",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_目标靶心_彩色矢量",
+    "description_zh": "目标靶心静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "目标靶心",
+      "贴纸"
+    ],
+    "file": "stickers/target.svg",
+    "named_file": "中文命名/贴纸/贴纸_目标靶心_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "telephone",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_电话联系_彩色矢量",
+    "description_zh": "电话联系静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "电话联系",
+      "贴纸"
+    ],
+    "file": "stickers/telephone.svg",
+    "named_file": "中文命名/贴纸/贴纸_电话联系_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "thumbs-down",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_不认可点踩_彩色矢量",
+    "description_zh": "不认可点踩静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "不认可点踩",
+      "贴纸"
+    ],
+    "file": "stickers/thumbs-down.svg",
+    "named_file": "中文命名/贴纸/贴纸_不认可点踩_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "thumbs-up",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_认可点赞_彩色矢量",
+    "description_zh": "认可点赞静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "认可点赞",
+      "贴纸"
+    ],
+    "file": "stickers/thumbs-up.svg",
+    "named_file": "中文命名/贴纸/贴纸_认可点赞_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  },
+  {
+    "id": "warning",
+    "kind": "sticker_svg",
+    "display_name_zh": "贴纸_风险警示_彩色矢量",
+    "description_zh": "风险警示静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+    "tags_zh": [
+      "风险警示",
+      "贴纸"
+    ],
+    "file": "stickers/warning.svg",
+    "named_file": "中文命名/贴纸/贴纸_风险警示_彩色矢量.svg",
+    "review_status": "xml_valid_not_visually_reviewed",
+    "license": "CC-BY-SA-4.0",
+    "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。"
+  }
+]

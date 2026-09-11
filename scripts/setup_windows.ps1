@@ -290,9 +290,14 @@ Write-Step "前端依赖已准备好。" "OK"
 
 $localEnvPath = Join-Path $projectRoot ".env"
 $exampleEnvPath = Join-Path $projectRoot ".env.example"
+$backendEnvPath = Join-Path $projectRoot "project\backend\.env"
 if (-not (Test-Path -LiteralPath $localEnvPath)) {
-    Copy-Item -LiteralPath $exampleEnvPath -Destination $localEnvPath
-    Write-Step "已创建本机配置 .env。需要云服务时，再在配置页或 .env 中填写自己的密钥。" "OK"
+    if (Test-Path -LiteralPath $backendEnvPath -PathType Leaf) {
+        Write-Step "已检测到 project/backend/.env，将继续使用这份本机配置。"
+    } else {
+        Copy-Item -LiteralPath $exampleEnvPath -Destination $localEnvPath
+        Write-Step "已创建本机配置 .env。需要云服务时，再在配置页或 .env 中填写自己的密钥。" "OK"
+    }
 }
 
 if (Get-Command "ffmpeg.exe" -ErrorAction SilentlyContinue) {

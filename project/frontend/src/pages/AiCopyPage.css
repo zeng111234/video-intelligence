@@ -109,6 +109,60 @@
   gap: 12px;
 }
 
+.ai-copy-compose-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ai-copy-compose-settings.is-compact {
+  flex-direction: row;
+  align-items: center;
+  gap: 18px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-default);
+  background: #fbfcff;
+}
+
+.ai-copy-compose-settings.is-compact .ai-copy-length-field {
+  min-width: 260px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.ai-copy-compose-settings.is-compact .ai-copy-skill-field {
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-copy-compose-settings.is-compact .ai-copy-skill-field textarea.ant-input {
+  min-height: 42px;
+  resize: vertical;
+}
+
+.ai-copy-length-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: #fbfcff;
+}
+
+.ai-copy-length-field > div,
+.ai-copy-skill-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ai-copy-skill-field textarea.ant-input {
+  margin-top: 2px;
+}
+
 .ai-copy-compose-panel .ant-input,
 .ai-copy-compose-panel .ant-input-affix-wrapper,
 .ai-copy-compose-panel textarea.ant-input {

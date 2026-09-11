@@ -24,14 +24,61 @@ def runtime_capabilities() -> dict[str, bool]:
 
 @lru_cache(maxsize=None)
 def load_asr_model(model_name: str = "base") -> Any:
-    """Load the local ASR model lazily so normal page startup stays lightweight."""
+    """Load the local ASR model lazily so normal page startup stays lightweight.
+
+    A bare model id makes ``faster_whisper`` resolve the repository over the
+    network, which fails outright whenever the machine's proxy environment is
+    unusable (a malformed ``NO_PROXY`` entry is enough) even though the weights
+    are already on disk.  Resolve the cached snapshot first and only fall back
+    to the repository id when nothing is installed.
+    """
+
     try:
         from faster_whisper import WhisperModel
     except ImportError as exc:
         raise RuntimeError(
             "faster-whisper 尚未安装，暂时无法执行真实本地转写。"
         ) from exc
-    return WhisperModel(model_name, device="cpu", compute_type="int8")
+    return WhisperModel(
+        _local_asr_model_path(model_name) or model_name,
+        device="cpu",
+        compute_type="int8",
+    )
+
+
+def _local_asr_model_path(model_name: str) -> str | None:
+    """Return an installed snapshot directory for ``model_name``, if any."""
+
+    try:
+        status = asr_model_status(model_name)
+    except (ValueError, OSError):
+        return None
+    if not status.get("installed"):
+        return None
+    return status.get("local_path")
+
+
+def _snapshot_path_for(model_name: str) -> str | None:
+    """Newest fully-downloaded snapshot directory for a supported model."""
+
+    repository = ASR_MODEL_REPOSITORIES.get(model_name)
+    if repository is None:
+        return None
+    root = Path(
+        os.environ.get("HF_HUB_CACHE")
+        or Path(os.environ.get("HF_HOME", Path.home() / ".cache" / "huggingface"))
+        / "hub"
+    )
+    snapshots_dir = root / f"models--{repository.replace('/', '--')}" / "snapshots"
+    if not snapshots_dir.is_dir():
+        return None
+    required = {"model.bin", "config.json", "tokenizer.json"}
+    candidates = [
+        snapshot
+        for snapshot in sorted(snapshots_dir.glob("*"), key=lambda path: path.stat().st_mtime)
+        if required.issubset({item.name for item in snapshot.rglob("*") if item.is_file()})
+    ]
+    return str(candidates[-1]) if candidates else None
 
 
 def asr_model_status(
@@ -58,6 +105,9 @@ def asr_model_status(
         "model_name": model_name,
         "repository": repository,
         "installed": installed,
+        # Absolute snapshot directory so the loader can avoid a network
+        # round-trip when the weights are already present.
+        "local_path": _snapshot_path_for(model_name) if installed else None,
         "size_bytes": sum(path.stat().st_size for path in model_dir.rglob("*") if path.is_file())
         if model_dir.is_dir()
         else 0,

@@ -20,7 +20,6 @@ import {
   listCrawlerKeywordQueues,
   probeCrawlerBatchCopy,
   recheckCrawlerBatchLegacyNoText,
-  resolveCrawlerCandidateOriginalMedia,
   resetCrawlerBrowserLoginState,
   startCrawlerBrowserDiscovery,
 } from "../api/client";

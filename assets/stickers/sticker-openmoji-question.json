@@ -1,0 +1,31 @@
+{
+  "asset_id": "sticker-openmoji-question",
+  "kind": "sticker",
+  "name": "question",
+  "editorial_kind": "process",
+  "display_name_zh": "贴纸_疑问问号_彩色矢量",
+  "description_zh": "疑问问号静态彩色图标；动画需渲染器添加，含义依据素材标识。",
+  "tags_zh": [
+    "疑问问号",
+    "贴纸"
+  ],
+  "avoid_when_zh": "不能把图标当作真实产品照片或业务截图；确认类符号不得用于否定事实。",
+  "review_status": "xml_valid_not_visually_reviewed",
+  "stored_name": "sticker-openmoji-question.png",
+  "media_type": "image/png",
+  "width": 512,
+  "height": 512,
+  "source_provider": "OpenMoji",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_cc_by_sa_asset",
+  "rights_holder": "OpenMoji contributors",
+  "attribution_required": true,
+  "attribution_text": "Stickers: OpenMoji contributors — https://openmoji.org/ — CC-BY-SA-4.0",
+  "authorization_status": "confirmed",
+  "rights_status": "cc_by_sa_4_0",
+  "publish_licensed": true,
+  "license_name": "CC-BY-SA-4.0",
+  "license_url": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "source_url": "https://openmoji.org/",
+  "sha256": "5531415572f4500ca54009b8033c93728e0ded95607735801cb52bbd3426d30d"
+}

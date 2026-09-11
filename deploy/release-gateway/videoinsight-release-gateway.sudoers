@@ -1,0 +1,2 @@
+Defaults!/usr/local/sbin/videoinsight-release-gateway !setenv
+devuser ALL=(root) NOPASSWD: /usr/local/sbin/videoinsight-release-gateway

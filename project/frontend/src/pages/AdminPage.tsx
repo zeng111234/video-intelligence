@@ -11,7 +11,6 @@ import { useToast } from "../components/Toast";
 import CustomerAdminSection from "../components/CustomerAdminSection";
 import PricingSection from "../components/PricingSection";
 import ServerStatusSection from "../components/ServerStatusSection";
-import CreditUsageSection from "../components/CreditUsageSection";
 import { useAdminLogin } from "../hooks/useAdminAuth";
 import "./AdminPage.css";
 
@@ -88,7 +87,6 @@ export default function AdminPage() {
         </Typography.Text>
       </header>
       <ServerStatusSection />
-      <CreditUsageSection />
       <CustomerAdminSection />
       <PricingSection />
     </main>

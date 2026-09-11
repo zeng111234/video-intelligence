@@ -107,6 +107,9 @@ describe("AiCopyPage", () => {
       within(view.container).getByPlaceholderText("粘贴已确认的转写稿、口播稿或原始文案..."),
       { target: { value: "原始文案" } },
     );
+    fireEvent.change(within(view.container).getByLabelText("客户 Skill"), {
+      target: { value: "先讲结论，再给三个步骤；语气像老板聊天。" },
+    });
     const optimizeButton = within(view.container).getByRole("button", { name: /开始去重改写/ });
     await waitFor(() => expect((optimizeButton as HTMLButtonElement).disabled).toBe(false));
     expect(view.container.textContent?.replace(/\s/g, "")).toContain(
@@ -119,6 +122,8 @@ describe("AiCopyPage", () => {
     await waitFor(() => expect(rewriteCopywriting).toHaveBeenCalledWith(expect.objectContaining({
       source_text: "原始文案",
       style_prompt: expect.stringContaining("去重改写"),
+      skill_prompt: "先讲结论，再给三个步骤；语气像老板聊天。",
+      target_length: 150,
     })));
 
     expect(await within(view.container).findByText("已生成的口播文案")).toBeTruthy();

@@ -1,0 +1,24 @@
+{
+  "asset_id": "icon-tabler-shopping-cart",
+  "kind": "label_icon",
+  "name": "shopping-cart",
+  "editorial_kinds": [
+    "offer_compare"
+  ],
+  "stored_name": "icon-tabler-shopping-cart.png",
+  "media_type": "image/png",
+  "source_provider": "Tabler Icons",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_mit_asset",
+  "rights_holder": "Paweł Kuna / Tabler Icons contributors",
+  "attribution_required": true,
+  "attribution_text": "Icons: Paweł Kuna / Tabler Icons contributors — https://github.com/tabler/tabler-icons — MIT",
+  "authorization_status": "confirmed",
+  "rights_status": "mit",
+  "publish_licensed": true,
+  "license_name": "MIT",
+  "license_url": "https://github.com/tabler/tabler-icons/blob/master/LICENSE",
+  "source_page": "https://github.com/tabler/tabler-icons",
+  "sha256": "e8d2544450379eb76ab331c433bfd140f98503c0b4cd081aaa67585bca2b0a6e",
+  "usage": "label_furniture_icon_15_to_25_percent_of_label_width"
+}

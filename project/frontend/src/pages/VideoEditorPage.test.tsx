@@ -334,7 +334,7 @@ describe("VideoEditorPage cloud-light workflow", () => {
         bgmEnabled: false,
         bgmId: undefined,
         bgmVolume: 0.18,
-        stylePresetId: "talking-head-grammar-only-v1",
+        stylePresetId: "talking-head-semantic-adaptive-v1",
       }));
     });
     expect(createVideoEditorBatch).toHaveBeenCalledTimes(1);

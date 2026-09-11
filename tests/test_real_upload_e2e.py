@@ -3,7 +3,6 @@
 不是 video-editor 页面跳 (P3 完整收口需 3 服务 + Electron), 但产出
 真新 MP4 + 真 quality_report (5 个新硬门) + 真 ASR 身份 + 真字幕 manifest.
 """
-import io
 import json
 import shutil
 import subprocess
@@ -27,15 +26,10 @@ def test_real_upload_local_export_end_to_end(tmp_path, real_upload_mp4):
     真 FFmpeg 渲染 → 真 MP4 → 真 quality_report 5 门验证."""
     if not shutil.which("ffmpeg"):
         pytest.skip("FFmpeg is required for the local export regression.")
-    from PIL import Image
-
     from src.models import (
-        AvatarTask,
         TaskStatus,
         VideoEditorBatch,
         VideoEditorBatchItem,
-        VideoEditStep,
-        VideoEditStepKind,
     )
     from src.services.video_editor_workflow import VideoEditorWorkflowService
 

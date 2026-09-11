@@ -117,6 +117,12 @@ def _release_candidates(repository_root: Path) -> list[Path]:
         if relative.replace("\\", "/").startswith(excluded_prefixes):
             continue
         path = repository_root / relative
+        # `git ls-files -c` also reports tracked files deleted in the current
+        # worktree.  A release scan must ignore those absent candidates while
+        # the deletion is being prepared; calling lstat() would turn a safe
+        # removal into a false scan failure.
+        if not path.exists():
+            continue
         mode = path.lstat().st_mode
         if not stat.S_ISREG(mode):
             raise OSError(f"release candidate is not a regular file: {relative}")

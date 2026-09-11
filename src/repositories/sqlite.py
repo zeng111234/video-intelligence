@@ -34,6 +34,7 @@ from src.models import (
     SyncReport,
     TaskKind,
     TaskRecord,
+    TaskStatus,
     TranscriptRevision,
     TranscriptionTask,
     PublishTask,
@@ -3450,6 +3451,12 @@ class SQLiteRepository:
         return TaskRecord
 
     def save_task(self, task: TaskRecord) -> None:
+        if task.status in {
+            TaskStatus.SUCCEEDED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        } and task.finished_at is None:
+            task = task.model_copy(update={"finished_at": task.updated_at})
         with self.connection:
             self.connection.execute(
                 """

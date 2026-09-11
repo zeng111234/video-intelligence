@@ -535,7 +535,13 @@ class TestPipelines:
         )
         app.dependency_overrides[backend_deps.get_repository] = lambda: repository
         try:
-            deleted = client.delete("/api/v1/pipelines")
+            blocked = client.delete("/api/v1/pipelines")
+            assert blocked.status_code == 400
+            assert len(repository.list_pipeline_runs()) == 2
+            deleted = client.delete(
+                "/api/v1/pipelines",
+                headers={"X-Confirm-Reset": "yes-reset-all-pipelines"},
+            )
         finally:
             app.dependency_overrides.pop(backend_deps.get_repository, None)
 
@@ -561,10 +567,11 @@ class TestTasks:
 
     def test_task_item_fields(self, client: TestClient):
         # 先创建一个任务确保列表非空
-        client.post(
+        created = client.post(
             "/api/v1/transcriptions",
             json={"media_name": "task_fields.mp4", "rights_confirmed": True},
         )
+        assert created.status_code == 200
         resp = client.get("/api/v1/tasks")
         items = resp.json()["items"]
         assert len(items) > 0
@@ -574,6 +581,10 @@ class TestTasks:
         assert "title" in item
         assert "status" in item
         assert "progress" in item
+        assert "finished_at" in item
+        detail = client.get(f"/api/v1/tasks/{created.json()['task_id']}")
+        assert detail.status_code == 200
+        assert detail.json()["finished_at"] is not None
 
     def test_tasks_include_created_transcriptions(self, client: TestClient):
         """创建转写任务后应出现在任务列表中。"""
@@ -999,6 +1010,9 @@ class TestCrawlerBatches:
         app.dependency_overrides[backend_deps.get_licensed_search_provider] = lambda: (
             provider
         )
+        app.dependency_overrides[backend_deps.get_discovery_search_provider] = lambda: (
+            provider
+        )
         app.dependency_overrides[backend_deps.get_commercial_search_service] = lambda: (
             service
         )
@@ -1054,6 +1068,10 @@ class TestCrawlerBatches:
         app.dependency_overrides.pop(backend_deps.get_repository, None)
         app.dependency_overrides.pop(
             backend_deps.get_licensed_search_provider,
+            None,
+        )
+        app.dependency_overrides.pop(
+            backend_deps.get_discovery_search_provider,
             None,
         )
         app.dependency_overrides.pop(
@@ -1979,6 +1997,23 @@ class TestCopywriting:
         assert data["is_mock"] is True
         assert data["compliance_status"] == "passed"
 
+    def test_rewrite_accepts_target_length_and_customer_skill(self, client: TestClient):
+        resp = client.post(
+            "/api/v1/copywriting/rewrite",
+            json={
+                "source_text": "一段需要按客户规则改写的原文。",
+                "target_length": 150,
+                "skill_prompt": "先讲结论，再给三个步骤。",
+            },
+        )
+        assert resp.status_code == 200
+        task_id = resp.json()["task_id"]
+
+        detail = client.get(f"/api/v1/copywriting/{task_id}")
+        assert detail.status_code == 200
+        assert detail.json()["target_length"] == 150
+        assert detail.json()["skill_prompt"] == "先讲结论，再给三个步骤。"
+
     def test_rewrite_with_variants(self, client: TestClient):
         """请求多个变体。"""
         resp = client.post(
@@ -2161,11 +2196,16 @@ class TestEditingTemplatesAndSubtitles:
         resp = client.get("/api/v1/subtitles/status")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["provider_name"] == "阿里云 Fun-ASR"
-        assert data["default_model"] == "fun-asr"
+        if data["asr_mode"] == "cloud":
+            assert data["provider_name"] == "阿里云 Fun-ASR"
+            assert data["default_model"] == "fun-asr"
+            assert data["supported_models"] == ["fun-asr"]
+        else:
+            assert data["provider_name"] == "faster-whisper"
+            assert data["default_model"] == "large-v3-turbo"
+            assert data["supported_models"] == ["large-v3-turbo", "base"]
         assert data["whisper_available"] is True
         assert data["supported_formats"] == ["srt", "ass"]
-        assert data["supported_models"] == ["fun-asr"]
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,122 @@
+[
+  {
+    "id": "alert-triangle",
+    "file": "tabler-outline/alert-triangle.svg",
+    "bytes": 563
+  },
+  {
+    "id": "arrow-right",
+    "file": "tabler-outline/arrow-right.svg",
+    "bytes": 434
+  },
+  {
+    "id": "briefcase",
+    "file": "tabler-outline/briefcase.svg",
+    "bytes": 571
+  },
+  {
+    "id": "building-factory",
+    "file": "tabler-outline/building-factory.svg",
+    "bytes": 656
+  },
+  {
+    "id": "building-store",
+    "file": "tabler-outline/building-store.svg",
+    "bytes": 599
+  },
+  {
+    "id": "chart-bar",
+    "file": "tabler-outline/chart-bar.svg",
+    "bytes": 668
+  },
+  {
+    "id": "chart-line",
+    "file": "tabler-outline/chart-line.svg",
+    "bytes": 428
+  },
+  {
+    "id": "check",
+    "file": "tabler-outline/check.svg",
+    "bytes": 395
+  },
+  {
+    "id": "clipboard-check",
+    "file": "tabler-outline/clipboard-check.svg",
+    "bytes": 561
+  },
+  {
+    "id": "coin",
+    "file": "tabler-outline/coin.svg",
+    "bytes": 525
+  },
+  {
+    "id": "database",
+    "file": "tabler-outline/database.svg",
+    "bytes": 497
+  },
+  {
+    "id": "discount",
+    "file": "tabler-outline/discount.svg",
+    "bytes": 590
+  },
+  {
+    "id": "help",
+    "file": "tabler-outline/help.svg",
+    "bytes": 514
+  },
+  {
+    "id": "lock",
+    "file": "tabler-outline/lock.svg",
+    "bytes": 548
+  },
+  {
+    "id": "map-pin",
+    "file": "tabler-outline/map-pin.svg",
+    "bytes": 491
+  },
+  {
+    "id": "messages",
+    "file": "tabler-outline/messages.svg",
+    "bytes": 530
+  },
+  {
+    "id": "package",
+    "file": "tabler-outline/package.svg",
+    "bytes": 525
+  },
+  {
+    "id": "percentage",
+    "file": "tabler-outline/percentage.svg",
+    "bytes": 488
+  },
+  {
+    "id": "route",
+    "file": "tabler-outline/route.svg",
+    "bytes": 527
+  },
+  {
+    "id": "tag",
+    "file": "tabler-outline/tag.svg",
+    "bytes": 571
+  },
+  {
+    "id": "target",
+    "file": "tabler-outline/target.svg",
+    "bytes": 504
+  },
+  {
+    "id": "user-check",
+    "file": "tabler-outline/user-check.svg",
+    "bytes": 473
+  },
+  {
+    "id": "users",
+    "file": "tabler-outline/users.svg",
+    "bytes": 550
+  },
+  {
+    "id": "x",
+    "file": "tabler-outline/x.svg",
+    "bytes": 367
+  }
+]

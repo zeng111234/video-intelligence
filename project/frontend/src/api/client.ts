@@ -4,7 +4,6 @@
 
 import type {
   AdminStatusResponse,
-  AdminCreditUsageResponse,
   AsrCapabilityResponse,
   AnalyticsResponse,
   AvatarAsset,
@@ -688,9 +687,29 @@ export function getProductionBatchWorkspace(batchId: string): Promise<Production
   return request(`/production/batches/${encodeURIComponent(batchId)}/workspace`);
 }
 
+export function changeProductionBatchProfile(
+  batchId: string,
+  profileId: string,
+): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/profile`, {
+    method: "PUT",
+    body: JSON.stringify({ profile_id: profileId }),
+  });
+}
+
+export function changeProductionBatchSpeechRate(
+  batchId: string,
+  speechRate: number,
+): Promise<ProductionBatch> {
+  return request(`/production/batches/${encodeURIComponent(batchId)}/speech-rate`, {
+    method: "PUT",
+    body: JSON.stringify({ speech_rate: speechRate }),
+  });
+}
+
 export function reviewProductionBatchItems(
   batchId: string,
-  params: { stage: "transcript" | "script" | "output" | "publish"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string; creative_plan?: { hook: string; key_points: string[]; call_to_action: string; visual_sections: string[] }; publish_draft?: { title: string; description: string; tags: string[] } }> },
+  params: { stage: "transcript" | "script" | "output" | "publish"; reviewer: string; items: Array<{ run_id: string; approved_text?: string; note?: string; skill_prompt?: string; target_length?: number; creative_plan?: { hook: string; key_points: string[]; call_to_action: string; visual_sections: string[] }; publish_draft?: { title: string; description: string; tags: string[] } }> },
 ): Promise<{ batch: ProductionBatch; results: ProductionBatchReviewResult[] }> {
   return request(`/production/batches/${encodeURIComponent(batchId)}/reviews`, {
     method: "POST",
@@ -935,14 +954,6 @@ export function getServerStatus(): Promise<ServerStatusResponse> {
 
 export function getCredits(): Promise<CreditBalanceResponse> {
   return request("/credits");
-}
-
-export function getAdminCreditUsage(
-  adminToken: string,
-): Promise<AdminCreditUsageResponse> {
-  return request("/credits/admin/usage", {
-    headers: { "X-Admin-Token": adminToken },
-  });
 }
 
 /** 管理员登录（账号+密码；兼容旧版 password-only） */
@@ -1469,6 +1480,8 @@ export function rewriteCopywriting(params: {
   source_text: string;
   target_audience?: string;
   style_prompt?: string;
+  skill_prompt?: string;
+  target_length?: number;
   tone?: string;
   variant_count?: number;
 }): Promise<CopywritingResponse> {
@@ -2160,7 +2173,7 @@ export function createVideoEditorBatch(params: {
   bgmId?: string;
   bgmVolume?: number;
   outputProfile?: VideoEditorOutputProfile;
-  stylePresetId?: "talking-head-pure-adaptive-v1" | "talking-head-brand-emphasis-v1" | "talking-head-local-grammar-v2";
+  stylePresetId?: "talking-head-pure-adaptive-v1" | "talking-head-brand-emphasis-v1" | "talking-head-semantic-adaptive-v1" | "talking-head-local-grammar-v2" | "talking-head-grammar-only-v1";
   quoteId?: string;
   billingConfirmation?: {
     confirmed: boolean;
@@ -2188,7 +2201,7 @@ export function createVideoEditorBatch(params: {
       bgm_id: params.bgmId || null,
       bgm_volume: params.bgmVolume ?? 0.18,
       output_profile: params.outputProfile || null,
-      style_preset_id: params.stylePresetId || "talking-head-local-grammar-v2",
+      style_preset_id: params.stylePresetId || "talking-head-semantic-adaptive-v1",
       quote_id: params.quoteId || null,
       billing_confirmation: params.billingConfirmation
         ? {

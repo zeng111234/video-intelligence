@@ -67,6 +67,8 @@
 
 `start.bat` 会先检测 Python、Node.js 和项目依赖，缺少时通过 Windows 应用安装程序自动安装，然后安装根目录 `requirements.txt` 与 `project/backend/requirements.txt` 两份 Python 运行依赖，并按 `project/frontend/package-lock.json` 安装前端依赖，最后启动前后端并打开页面。如果电脑连 Windows 应用安装程序都没有，才会停止并给出唯一的安装地址。自动安装失败后不会循环重试。`.env` 不随项目分发：首次启动只会从 `.env.example` 创建一份无密钥的本机配置，需要云服务时再填写朋友自己的账号配置。
 
+注意：源码启动时，密钥和运行模式是两项独立配置。只填写密钥而保留 `VIDEO_EDITOR_PROVIDER_MODE=sandbox`、`CRAWLER_PROVIDER_MODE=sandbox` 或 `AVATAR_PROVIDER_MODE=sandbox`，对应功能仍会显示沙箱；把配置放在根目录 `.env`（没有时也兼容 `project/backend/.env`）并修改模式后重新双击 `start.bat`，启动日志会显示本次实际模式（只显示模式名，不显示密钥）。正式 Windows 安装包不读取外部 `.env`，供应商密钥必须留在公司控制层，这是安全设计。
+
 启动后可直接打开：
 
 - 工作台：<http://localhost:1001/pipeline>

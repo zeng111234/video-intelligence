@@ -352,7 +352,15 @@ def test_all_shipped_powershell_scripts_parse_in_windows_powershell_5() -> None:
     if not executable:
         pytest.skip("Windows PowerShell 5 is not available")
 
-    excluded_parts = {"node_modules", "build", "dist", "release", "venv", ".venv"}
+    excluded_parts = {
+        "node_modules",
+        "build",
+        "dist",
+        "release",
+        "venv",
+        ".venv",
+        "work",
+    }
     scripts = [
         path
         for path in REPOSITORY_ROOT.rglob("*.ps1")

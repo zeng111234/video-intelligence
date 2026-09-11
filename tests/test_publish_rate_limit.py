@@ -60,8 +60,10 @@ class TestPublishRateLimit:
 
     def test_daily_limit_blocks_the_next_publish(self):
         """达到当前每日上限后，下一个任务被明确拒绝（FAILED + 提示）。"""
+        # 用最近一分钟内的记录覆盖每日上限；这样测试在凌晨运行时不会
+        # 因“10 分钟前”跨到前一天而失去当天计数。
         for i in range(publisher_module.PUBLISH_DAILY_LIMIT):
-            self._mark_published(self._enqueue_douyin(), minutes_ago=10 + i)
+            self._mark_published(self._enqueue_douyin(), minutes_ago=1)
         task = self._enqueue_douyin()
         result = self.svc.execute_queued_task(task.task_id)
         assert result is not None
@@ -106,7 +108,7 @@ class TestPublishRateLimit:
         publisher_module.PUBLISH_DAILY_LIMIT = 2
         try:
             for i in range(2):
-                self._mark_published(self._enqueue_douyin(), minutes_ago=10 + i)
+                self._mark_published(self._enqueue_douyin(), minutes_ago=1)
             task = self._enqueue_douyin()
             result = self.svc.execute_queued_task(task.task_id)
             assert result.status.value == "failed"

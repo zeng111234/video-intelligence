@@ -40,6 +40,9 @@
     "0.2.41",
     "0.2.42",
     "0.2.43",
+    "0.2.45",
+    "0.2.46",
+    "0.2.47",
     "0.2.5",
     "0.2.6",
     "0.2.7",
@@ -48,10 +51,10 @@
   ],
   "current_candidate": null,
   "release_in_progress": {
-    "version": "0.2.43",
-    "source_commit": "8fe6cd673edbe4d777d8620dfb68c6af5ed815c8",
+    "version": "0.2.47",
+    "source_commit": "e2bc9bcd65a020090829b34c90c9d32a890c4769",
     "server_state": "ready",
-    "control_plane_sha256": "7e22e852d20b9e87064bd134689b7a3369b7bb38b02d511bdd698f41229243dc",
+    "control_plane_sha256": "dbe7636c7157d239cdda41b782e89de65d34ff3702ae67e2b0a0d3f303196570",
     "windows_state": "pending",
     "installer_sha256": null
   },
@@ -155,6 +158,28 @@
   ],
   "superseded_releases": [
     {
+      "version": "0.2.45",
+      "source_commit": "4fd49152a809875950311b12db866b51feb194c9",
+      "server_state": "ready",
+      "control_plane_sha256": "110a36b8f168ea0a9aeebd83eb9269f9ab9f20f86516aab84441e40b3626bd05",
+      "windows_state": "attempted",
+      "installer_sha256": null,
+      "superseded_by": "0.2.46",
+      "reason": "0.2.45 控制层已准备但 Windows 客户端阶段未完成；由包含当前工作区改动的 0.2.46 统一替代。",
+      "superseded_at": "2026-09-08T00:13:20+08:00"
+    },
+    {
+      "version": "0.2.43",
+      "source_commit": "8fe6cd673edbe4d777d8620dfb68c6af5ed815c8",
+      "server_state": "ready",
+      "control_plane_sha256": "7e22e852d20b9e87064bd134689b7a3369b7bb38b02d511bdd698f41229243dc",
+      "windows_state": "pending",
+      "installer_sha256": null,
+      "superseded_by": "0.2.45",
+      "reason": "0.2.43 控制层已部署，但 Windows 客户端阶段未完成；公网更新轨道已存在 0.2.44，本次由 0.2.45 统一替代。",
+      "superseded_at": "2026-09-07T12:00:00+08:00"
+    },
+    {
       "version": "0.2.42",
       "source_commit": "b032b53f57c54745c8e18ae66330627ca5f4d792",
       "server_state": "ready",
@@ -164,6 +189,17 @@
       "superseded_by": "0.2.43",
       "reason": "0.2.42 仅完成控制层部署，Windows 客户端未完成；由包含完整源码改动的 0.2.43 替代。",
       "superseded_at": "2026-08-29T17:49:07+08:00"
+    },
+    {
+      "version": "0.2.46",
+      "source_commit": "1b5e749245504554cb881b8525fcdee49bfb1e98",
+      "server_state": "ready",
+      "control_plane_sha256": "fb88cd132093712f1627e801a38f96daf3215120f5fc43f285ccdfc0eb1a0d7e",
+      "windows_state": "pending",
+      "installer_sha256": null,
+      "superseded_by": "0.2.47",
+      "reason": "0.2.46 控制层已准备但 Windows 客户端未完成；当前源码改动改由 0.2.47 统一发布。",
+      "superseded_at": "2026-09-10T00:26:29+08:00"
     }
   ]
 }

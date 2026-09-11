@@ -483,6 +483,7 @@ class PipelineService:
         tone: str = "casual",
         target_audience: str = "",
         style_prompt: str = "",
+        skill_prompt: str = "",
         variant_count: int = 1,
         existing_run: PipelineRun | None = None,
     ) -> PipelineRun:
@@ -518,6 +519,7 @@ class PipelineService:
             "tone": tone,
             "target_audience": target_audience,
             "style_prompt": style_prompt,
+            "skill_prompt": str(skill_prompt or "").strip()[:8000],
             "variant_count": variant_count,
         }
         if existing_run is None:
@@ -727,6 +729,8 @@ class PipelineService:
         tone: str = "casual",
         variant_count: int = 2,
         source_text_override: str = "",
+        user_request: str = "",
+        skill_prompt: str = "",
     ) -> PipelineRun:
         """将一条真实转写改写为待客户确认的口播稿。"""
         source_text = source_text_override.strip() or self._transcription_text(transcription)
@@ -742,6 +746,11 @@ class PipelineService:
                 "原文没有明确行动时使用中性总结，不得凭空添加购买、私信、关注、收益或效果承诺。"
                 "只输出一份可人工审核的纯口播文案，不要多个版本或 Markdown。"
             )
+            if user_request.strip():
+                rewrite_goal += (
+                    "客户本次改写要求（只调整表达、结构或语气，不能改变原文事实）："
+                    + user_request.strip()[:500]
+                )
             copy_task = self.copywriting_service.rewrite(
                 source_text=source_text,
                 platform=platform.value,
@@ -752,6 +761,7 @@ class PipelineService:
                 rewrite_goal=rewrite_goal,
                 variant_count=variant_count,
                 source_task_id=transcription.task_id,
+                skill_prompt=skill_prompt,
             )
             if copy_task.status == TaskStatus.FAILED:
                 raise RuntimeError(copy_task.error_message or "文案改写失败。")
@@ -913,6 +923,9 @@ class PipelineService:
         reviewer: str,
         approved_text: str,
         note: str = "",
+        rewrite_request: str = "",
+        skill_prompt: str = "",
+        target_length: int | None = None,
     ) -> PipelineRun:
         """记录转写确认并生成待审核改写稿。"""
         text = approved_text.strip()
@@ -1000,6 +1013,28 @@ class PipelineService:
             raise ValueError("转写审核状态已变化，请刷新后重试。")
         profile = dict(reviewed.config.get("profile") or {})
         request = dict(reviewed.config.get("candidate_request") or {})
+        requested_target_length = max(
+            50,
+            min(int(target_length or request.get("target_length") or 240), 800),
+        )
+        requested_skill_prompt = str(skill_prompt or "").strip()[:8000]
+        request.update(
+            {
+                "target_length": requested_target_length,
+                "skill_prompt": requested_skill_prompt,
+            }
+        )
+        reviewed = reviewed.model_copy(
+            update={
+                "config": {
+                    **reviewed.config,
+                    "candidate_request": request,
+                    "rewrite_skill_prompt": requested_skill_prompt,
+                    "rewrite_target_length": requested_target_length,
+                }
+            }
+        )
+        self.repository.save_pipeline_run(reviewed)
         return self.create_copywriting_review(
             run=reviewed,
             transcription=task,
@@ -1014,10 +1049,12 @@ class PipelineService:
                 or profile.get("script_style")
                 or ""
             ),
-            target_length=int(request.get("target_length") or 240),
+            target_length=requested_target_length,
             tone=str(request.get("tone") or "casual"),
             variant_count=1,
             source_text_override=text,
+            user_request=rewrite_request,
+            skill_prompt=requested_skill_prompt,
         )
 
     def pause_for_copy_review(
@@ -1242,6 +1279,7 @@ class PipelineService:
             tone=str(request.get("tone") or "casual"),
             target_audience=str(request.get("target_audience") or ""),
             style_prompt=str(request.get("style_prompt") or ""),
+            skill_prompt=str(request.get("skill_prompt") or ""),
             variant_count=int(request.get("variant_count") or 2),
             existing_run=run,
         )

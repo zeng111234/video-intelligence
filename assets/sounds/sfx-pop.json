@@ -1,0 +1,17 @@
+{
+  "asset_id": "sfx-pop-soft-local",
+  "kind": "sound_effect",
+  "name": "pop_soft",
+  "stored_name": "sfx-pop.wav",
+  "media_type": "audio/wav",
+  "source_provider": "VideoInsight",
+  "source_type": "project_local_asset",
+  "asset_origin": "project_owned_local_generated_asset",
+  "rights_holder": "VideoInsight project",
+  "authorization_status": "confirmed",
+  "rights_status": "project_owned_local_generated",
+  "publish_licensed": true,
+  "license_name": "Project-owned local generated audio",
+  "source_url": "",
+  "sha256": "71ab52d0b35dcd2239ce37c69a204dac6a725ee513bc79b5b57ae1f96b5f7e45"
+}

@@ -1,0 +1,24 @@
+{
+  "asset_id": "icon-tabler-git-compare",
+  "kind": "label_icon",
+  "name": "git-compare",
+  "editorial_kinds": [
+    "offer_compare"
+  ],
+  "stored_name": "icon-tabler-git-compare.png",
+  "media_type": "image/png",
+  "source_provider": "Tabler Icons",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_mit_asset",
+  "rights_holder": "Paweł Kuna / Tabler Icons contributors",
+  "attribution_required": true,
+  "attribution_text": "Icons: Paweł Kuna / Tabler Icons contributors — https://github.com/tabler/tabler-icons — MIT",
+  "authorization_status": "confirmed",
+  "rights_status": "mit",
+  "publish_licensed": true,
+  "license_name": "MIT",
+  "license_url": "https://github.com/tabler/tabler-icons/blob/master/LICENSE",
+  "source_page": "https://github.com/tabler/tabler-icons",
+  "sha256": "9bb22868b233590fd2758906f2bc9283c88d554b9ca186866b648b878cd22ea4",
+  "usage": "label_furniture_icon_15_to_25_percent_of_label_width"
+}

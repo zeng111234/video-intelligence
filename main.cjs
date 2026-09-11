@@ -1,0 +1,339 @@
+const { app, BrowserWindow, dialog, shell } = require("electron");
+const { spawn } = require("node:child_process");
+const { appendFileSync, existsSync, mkdirSync, readFileSync } = require("node:fs");
+const net = require("node:net");
+const path = require("node:path");
+const os = require("node:os");
+const { resolveBackendRuntimeRoot, sanitizeBackendEnvironment } = require("./environment.cjs");
+const {
+  buildUpdateProgressHtml,
+  compareVersions,
+  downloadInstaller,
+  fetchManifest,
+  validateReleaseConfig,
+} = require("./update.cjs");
+
+let backendProcess = null;
+let mainWindow = null;
+let updateCheckStarted = false;
+let backendOrigin = "";
+
+function findAvailableLoopbackPort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", reject);
+    server.listen({ host: "127.0.0.1", port: 0, exclusive: true }, () => {
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : 0;
+      server.close((error) => {
+        if (error) reject(error);
+        else if (!port) reject(new Error("未能分配本机服务端口"));
+        else resolve(port);
+      });
+    });
+  });
+}
+
+function formatMegabytes(bytes) {
+  return `${(Number(bytes || 0) / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function createUpdateProgressWindow({ version, destination }) {
+  const progressWindow = new BrowserWindow({
+    width: 560,
+    height: 360,
+    parent: mainWindow || undefined,
+    modal: Boolean(mainWindow),
+    show: false,
+    closable: false,
+    resizable: false,
+    maximizable: false,
+    minimizable: true,
+    backgroundColor: "#f6f8fc",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  progressWindow.removeMenu();
+  await progressWindow.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(
+      buildUpdateProgressHtml({ version, destination }),
+    )}`,
+  );
+  progressWindow.show();
+  return progressWindow;
+}
+
+function renderUpdateProgress(progressWindow, state) {
+  if (!progressWindow || progressWindow.isDestroyed()) return;
+  progressWindow.setProgressBar(Math.max(0, Math.min(1, Number(state.percent || 0) / 100)));
+  mainWindow?.setProgressBar(Math.max(0, Math.min(1, Number(state.percent || 0) / 100)));
+  void progressWindow.webContents
+    .executeJavaScript(`window.renderUpdateProgress(${JSON.stringify(state)})`, true)
+    .catch(() => undefined);
+}
+
+function launchInstaller(destination) {
+  return new Promise((resolve, reject) => {
+    const installer = spawn(destination, [], {
+      cwd: path.dirname(destination),
+      detached: true,
+      windowsHide: false,
+      stdio: "ignore",
+    });
+    installer.once("error", reject);
+    installer.once("spawn", () => {
+      installer.unref();
+      resolve();
+    });
+  });
+}
+
+app.setName("VideoInsight");
+
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+}
+
+function backendRuntimeRoot() {
+  return resolveBackendRuntimeRoot({
+    executablePath: process.execPath,
+    localAppData: process.env.LOCALAPPDATA,
+    fallbackUserData: app.getPath("userData"),
+    existsSync,
+    readFileSync,
+  });
+}
+
+function backendExecutable() {
+  return path.join(process.resourcesPath, "backend", "VideoInsightBackend.exe");
+}
+
+function appendBackendLifecycle(event, details = {}) {
+  try {
+    const runtimeRoot = backendRuntimeRoot();
+    const logDirectory = path.join(runtimeRoot, "data", "logs");
+    mkdirSync(logDirectory, { recursive: true });
+    appendFileSync(
+      path.join(logDirectory, "desktop.log"),
+      `${new Date().toISOString()} INFO electron.backend ${event} ${JSON.stringify(details)}\n`,
+      "utf8",
+    );
+  } catch {
+    // Lifecycle logging must never prevent the desktop client from starting.
+  }
+}
+
+function releaseConfiguration() {
+  const configurationPath = path.join(process.resourcesPath, "config", "release.json");
+  if (!existsSync(configurationPath)) return null;
+  try {
+    return validateReleaseConfig(JSON.parse(readFileSync(configurationPath, "utf8")));
+  } catch {
+    return null;
+  }
+}
+
+async function checkForUpdate() {
+  if (updateCheckStarted) return;
+  updateCheckStarted = true;
+  const configuration = releaseConfiguration();
+  if (!configuration) return;
+  let manifest;
+  let progressWindow = null;
+  try {
+    manifest = await fetchManifest(configuration.controlPlaneUrl);
+  } catch {
+    return;
+  }
+  if (!manifest || compareVersions(manifest.version, configuration.currentVersion) <= 0) return;
+  try {
+    const answer = await dialog.showMessageBox(mainWindow, {
+      type: "info",
+      title: "VideoInsight 有新版本",
+      message: `发现新版本 ${manifest.version}`,
+      detail: manifest.notes || "更新会保留本机数据，下载完成后自动覆盖安装。",
+      buttons: ["下载并更新", "稍后再说"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (answer.response !== 0) return;
+    const updateDirectory = path.join(
+      os.tmpdir(),
+      "VideoInsight-updates",
+      manifest.version,
+      `${Date.now()}-${process.pid}`,
+    );
+    const destination = path.join(updateDirectory, manifest.installer);
+    progressWindow = await createUpdateProgressWindow({
+      version: manifest.version,
+      destination,
+    });
+    let lastProgressAt = 0;
+    let lastPercent = -1;
+    await downloadInstaller({
+      controlPlaneUrl: configuration.controlPlaneUrl,
+      manifest,
+      destination,
+      onProgress: ({ downloadedBytes, totalBytes, percent }) => {
+        const now = Date.now();
+        if (percent < 100 && now - lastProgressAt < 150 && percent - lastPercent < 0.5) return;
+        lastProgressAt = now;
+        lastPercent = percent;
+        renderUpdateProgress(progressWindow, {
+          percent,
+          status: percent >= 100 ? "下载完成，正在校验并打开安装程序…" : "正在下载更新，请不要关闭软件…",
+          detail: `${percent.toFixed(1)}% · ${formatMegabytes(downloadedBytes)} / ${formatMegabytes(totalBytes)}`,
+        });
+      },
+    });
+    renderUpdateProgress(progressWindow, {
+      percent: 100,
+      status: "校验通过，正在打开安装程序…",
+      detail: `100% · 安装包已保存到 ${destination}`,
+    });
+    await launchInstaller(destination);
+    app.quit();
+  } catch (error) {
+    mainWindow?.setProgressBar(-1);
+    if (progressWindow && !progressWindow.isDestroyed()) progressWindow.destroy();
+    await dialog.showMessageBox(mainWindow, {
+      type: "warning",
+      title: "暂时无法更新",
+      message: "更新没有完成，当前版本仍可继续使用。",
+      detail:
+        "请关闭其他 VideoInsight 安装窗口后重新打开软件再试一次。仍失败时，请把 installer-bootstrap.log 和 desktop.log 发给技术人员。",
+      buttons: ["知道了"],
+    });
+  }
+}
+
+function startBackend(port) {
+  const executable = backendExecutable();
+  if (!existsSync(executable)) {
+    throw new Error(`缺少本地服务文件：${executable}`);
+  }
+  const runtimeRoot = backendRuntimeRoot();
+  mkdirSync(runtimeRoot, { recursive: true });
+  backendProcess = spawn(executable, [], {
+    cwd: runtimeRoot,
+    windowsHide: true,
+    env: sanitizeBackendEnvironment(process.env, {
+      VIDEOINSIGHT_NO_BROWSER: "true",
+      VIDEOINSIGHT_RUNTIME_ROOT: runtimeRoot,
+      VIDEOINSIGHT_DESKTOP_PORT: String(port),
+      VIDEOINSIGHT_NODE_EXECUTABLE: process.execPath,
+      VIDEOINSIGHT_NODE_AS_ELECTRON: "true",
+    }),
+  });
+  const backendPid = backendProcess.pid || null;
+  appendBackendLifecycle("backend_spawned", { pid: backendPid, port });
+  backendProcess.once("error", (error) => {
+    appendBackendLifecycle("backend_spawn_error", {
+      pid: backendPid,
+      code: error.code || "",
+    });
+  });
+  backendProcess.once("exit", (code, signal) => {
+    appendBackendLifecycle("backend_exited", {
+      pid: backendPid,
+      code: code === null ? "" : code,
+      signal: signal || "",
+      app_quitting: Boolean(app.isQuitting),
+    });
+    backendProcess = null;
+    if (!app.isQuitting && code !== 0) {
+      dialog.showErrorBox(
+        "VideoInsight 本地服务已停止",
+        "请重新启动应用；如果仍然失败，请把本机 VideoInsight 数据目录中的 desktop.log 发给技术人员。",
+      );
+    }
+  });
+}
+
+async function waitForBackend(healthUrl, timeoutMs = 90000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1000) });
+      if (response.ok) return;
+    } catch {
+      // The local service may need several seconds on the first launch.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error("本地服务启动超时");
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1360,
+    height: 900,
+    minWidth: 360,
+    minHeight: 640,
+    show: false,
+    backgroundColor: "#f6f8fc",
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  mainWindow.removeMenu();
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (backendOrigin && url.startsWith(`${backendOrigin}/`)) {
+      return { action: "allow" };
+    }
+    shell.openExternal(url);
+    return { action: "deny" };
+  });
+  mainWindow.once("ready-to-show", () => mainWindow?.show());
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
+}
+
+async function boot() {
+  createWindow();
+  mainWindow.loadURL(
+    `data:text/html;charset=utf-8,${encodeURIComponent(
+      '<style>body{font-family:Segoe UI,sans-serif;display:grid;place-items:center;height:100vh;margin:0;background:#f6f8fc;color:#14213d}div{text-align:center}b{display:block;font-size:24px;margin-bottom:12px}</style><div><b>VideoInsight 正在启动</b>首次启动可能需要几十秒，请稍候…</div>',
+    )}`,
+  );
+  const port = await findAvailableLoopbackPort();
+  backendOrigin = `http://127.0.0.1:${port}`;
+  startBackend(port);
+  await waitForBackend(`${backendOrigin}/health`);
+  await mainWindow.loadURL(`${backendOrigin}/login`);
+  setTimeout(() => void checkForUpdate(), 3000);
+}
+
+app.whenReady().then(() => {
+  boot().catch((error) => {
+    dialog.showErrorBox(
+      "VideoInsight 启动失败",
+      `${error.message}\n\n请查看本机 VideoInsight 数据目录中的 desktop.log。`,
+    );
+    app.quit();
+  });
+});
+
+app.on("second-instance", () => {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.focus();
+});
+
+app.on("window-all-closed", () => app.quit());
+
+app.on("before-quit", () => {
+  app.isQuitting = true;
+  if (backendProcess) {
+    backendProcess.kill();
+    backendProcess = null;
+  }
+});

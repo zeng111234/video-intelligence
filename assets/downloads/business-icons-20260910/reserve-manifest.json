@@ -1,0 +1,452 @@
+[
+  {
+    "id": "archive-box",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/archive-box.svg",
+    "display_name_zh": "archive-box",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "arrow-right",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/arrow-right.svg",
+    "display_name_zh": "arrow-right",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "arrow-trending-up",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/arrow-trending-up.svg",
+    "display_name_zh": "arrow-trending-up",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "banknotes",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/banknotes.svg",
+    "display_name_zh": "banknotes",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "briefcase",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/briefcase.svg",
+    "display_name_zh": "briefcase",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "building-office-2",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/building-office-2.svg",
+    "display_name_zh": "building-office-2",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "building-storefront",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/building-storefront.svg",
+    "display_name_zh": "building-storefront",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "calendar-days",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/calendar-days.svg",
+    "display_name_zh": "calendar-days",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "chart-bar",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/chart-bar.svg",
+    "display_name_zh": "chart-bar",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "chat-bubble-left-right",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/chat-bubble-left-right.svg",
+    "display_name_zh": "chat-bubble-left-right",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "check",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/check.svg",
+    "display_name_zh": "check",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "circle-stack",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/circle-stack.svg",
+    "display_name_zh": "circle-stack",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "clipboard-document-check",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/clipboard-document-check.svg",
+    "display_name_zh": "clipboard-document-check",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "clock",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/clock.svg",
+    "display_name_zh": "clock",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "device-phone-mobile",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/device-phone-mobile.svg",
+    "display_name_zh": "device-phone-mobile",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "document-text",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/document-text.svg",
+    "display_name_zh": "document-text",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "exclamation-triangle",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/exclamation-triangle.svg",
+    "display_name_zh": "exclamation-triangle",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "light-bulb",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/light-bulb.svg",
+    "display_name_zh": "light-bulb",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "lock-closed",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/lock-closed.svg",
+    "display_name_zh": "lock-closed",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "magnifying-glass",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/magnifying-glass.svg",
+    "display_name_zh": "magnifying-glass",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "map-pin",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/map-pin.svg",
+    "display_name_zh": "map-pin",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "phone",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/phone.svg",
+    "display_name_zh": "phone",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "question-mark-circle",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/question-mark-circle.svg",
+    "display_name_zh": "question-mark-circle",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "rectangle-group",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/rectangle-group.svg",
+    "display_name_zh": "rectangle-group",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "shopping-bag",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/shopping-bag.svg",
+    "display_name_zh": "shopping-bag",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "sparkles",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/sparkles.svg",
+    "display_name_zh": "sparkles",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "tag",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/tag.svg",
+    "display_name_zh": "tag",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "users",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/users.svg",
+    "display_name_zh": "users",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "x-mark",
+    "style": "heroicons-outline",
+    "file": "heroicons-outline/x-mark.svg",
+    "display_name_zh": "x-mark",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "arrow-right",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/arrow-right.svg",
+    "display_name_zh": "arrow-right",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "banknotes",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/banknotes.svg",
+    "display_name_zh": "banknotes",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "check",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/check.svg",
+    "display_name_zh": "check",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "exclamation-triangle",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/exclamation-triangle.svg",
+    "display_name_zh": "exclamation-triangle",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "light-bulb",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/light-bulb.svg",
+    "display_name_zh": "light-bulb",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "map-pin",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/map-pin.svg",
+    "display_name_zh": "map-pin",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "question-mark-circle",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/question-mark-circle.svg",
+    "display_name_zh": "question-mark-circle",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "sparkles",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/sparkles.svg",
+    "display_name_zh": "sparkles",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "tag",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/tag.svg",
+    "display_name_zh": "tag",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "x-mark",
+    "style": "heroicons-solid",
+    "file": "heroicons-solid/x-mark.svg",
+    "display_name_zh": "x-mark",
+    "license": "MIT",
+    "source": "Heroicons",
+    "status": "downloaded"
+  },
+  {
+    "id": "arrow-right",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/arrow-right.svg",
+    "display_name_zh": "arrow-right",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "briefcase",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/briefcase.svg",
+    "display_name_zh": "briefcase",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "chart-bar",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/chart-bar.svg",
+    "display_name_zh": "chart-bar",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "check",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/check.svg",
+    "display_name_zh": "check",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "clock",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/clock.svg",
+    "display_name_zh": "clock",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "magnifying-glass",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/magnifying-glass.svg",
+    "display_name_zh": "magnifying-glass",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "map-pin",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/map-pin.svg",
+    "display_name_zh": "map-pin",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "phone",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/phone.svg",
+    "display_name_zh": "phone",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "shopping-bag",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/shopping-bag.svg",
+    "display_name_zh": "shopping-bag",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "tag",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/tag.svg",
+    "display_name_zh": "tag",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  },
+  {
+    "id": "users",
+    "style": "phosphor-regular",
+    "file": "phosphor-regular/users.svg",
+    "display_name_zh": "users",
+    "license": "MIT",
+    "source": "Phosphor",
+    "status": "downloaded"
+  }
+]

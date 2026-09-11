@@ -849,6 +849,7 @@ class CopywritingService:
         platform: str = "douyin",
         target_audience: str = "",
         style_prompt: str = "",
+        skill_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
         rewrite_goal: str = "",
@@ -868,6 +869,7 @@ class CopywritingService:
         max_variants = int(cap.get("max_variants", 3))
         variant_count = max(1, min(variant_count, max_variants))
         target_length = max(50, min(target_length, 800))
+        skill_prompt = str(skill_prompt or "").strip()[:8000]
 
         now = datetime.now().astimezone()
         task = CopywritingTask(
@@ -882,6 +884,7 @@ class CopywritingService:
             platform=platform_enum,
             target_audience=target_audience,
             style_prompt=style_prompt,
+            skill_prompt=skill_prompt,
             target_length=target_length,
             tone=tone,
             rewrite_goal=rewrite_goal,
@@ -920,6 +923,7 @@ class CopywritingService:
                     platform=platform_enum.value,
                     target_audience=target_audience,
                     style_prompt=style_prompt,
+                    skill_prompt=skill_prompt,
                     target_length=target_length,
                     tone=tone,
                     rewrite_goal=goal,
@@ -963,6 +967,7 @@ class CopywritingService:
                     platform=platform_enum.value,
                     target_audience=target_audience,
                     style_prompt=style_prompt,
+                    skill_prompt=skill_prompt,
                     target_length=target_length,
                     tone=tone,
                     rewrite_goal=self._semantic_length_retry_hint(
@@ -1070,6 +1075,7 @@ class CopywritingService:
         selling_points: str = "",
         call_to_action: str = "",
         style_prompt: str = "",
+        skill_prompt: str = "",
         target_length: int = 300,
         tone: str = "professional",
         variant_count: int = 1,
@@ -1086,6 +1092,7 @@ class CopywritingService:
         max_variants = int(cap.get("max_variants", 3))
         variant_count = max(1, min(variant_count, max_variants))
         target_length = max(50, min(target_length, 800))
+        skill_prompt = str(skill_prompt or "").strip()[:8000]
 
         now = datetime.now().astimezone()
         task = CopywritingTask(
@@ -1102,6 +1109,7 @@ class CopywritingService:
             selling_points=selling_points,
             call_to_action=call_to_action,
             style_prompt=style_prompt,
+            skill_prompt=skill_prompt,
             target_length=target_length,
             tone=tone,
             provider_name=str(cap.get("provider_name", "unknown")),
@@ -1129,9 +1137,7 @@ class CopywritingService:
             )
 
             def run(retry_hint: str) -> list[str]:
-                prompt = "\n".join(
-                    item for item in [style_prompt.strip(), retry_hint] if item
-                )
+                prompt = "\n".join(item for item in [style_prompt, retry_hint] if item)
                 results = self.engine.generate(
                     content_brief=content_brief,
                     platform=platform_enum.value,
@@ -1139,6 +1145,7 @@ class CopywritingService:
                     selling_points=selling_points,
                     call_to_action=call_to_action,
                     style_prompt=prompt,
+                    skill_prompt=skill_prompt,
                     target_length=target_length,
                     tone=tone,
                     variant_count=variant_count,
@@ -1163,6 +1170,78 @@ class CopywritingService:
                 run=run,
                 fallback_results=[fallback_text],
             )
+            longest_result = max(
+                (self._spoken_character_count(result) for result in results),
+                default=0,
+            )
+            # 目标字数是生成路径的真实约束：只在单稿超限时做一次语义压缩，
+            # 不直接截断，避免破坏事实、句子和行动引导。
+            if variant_count == 1 and longest_result > target_length:
+                source_for_compression = min(
+                    results,
+                    key=self._spoken_character_count,
+                )
+                actual_length = self._spoken_character_count(source_for_compression)
+                compressed_results = self.engine.rewrite(
+                    source_for_compression,
+                    platform=platform_enum.value,
+                    target_audience=target_audience,
+                    style_prompt=style_prompt,
+                    skill_prompt=skill_prompt,
+                    target_length=target_length,
+                    tone=tone,
+                    rewrite_goal=self._semantic_length_retry_hint(
+                        target_length=target_length,
+                        actual_length=actual_length,
+                    ),
+                    variant_count=1,
+                )
+                self._accumulate_last_usage(accumulated_usage)
+                raw_attention_terms = getattr(self.engine, "last_attention_terms", [])
+                latest_attention_terms.clear()
+                if isinstance(raw_attention_terms, list):
+                    latest_attention_terms.extend(str(item) for item in raw_attention_terms)
+
+                compressed_text = (compressed_results or [""])[0].strip()
+                compressed_risks = self._risk_categories([compressed_text])
+                if (
+                    not compressed_text
+                    or self._spoken_character_count(compressed_text) > target_length
+                    or compressed_risks
+                ):
+                    token_usage = accumulated_usage or self._last_usage()
+                    charged_credits = self._charge_token_usage(
+                        capability=cap,
+                        task_id=task.task_id,
+                        token_usage=token_usage,
+                    )
+                    reason = "AI 二次语义压缩未返回可用文案。"
+                    if compressed_risks:
+                        reason = "AI 二次语义压缩引入了需要人工处理的风险表达。"
+                    elif compressed_text:
+                        reason = (
+                            f"AI 二次语义压缩后仍约 "
+                            f"{self._spoken_character_count(compressed_text)} 字，"
+                            f"超过 {target_length} 字上限。"
+                        )
+                    task = task.model_copy(
+                        update={
+                            "status": TaskStatus.FAILED,
+                            "progress": 100,
+                            "stage": "文案未压缩到目标时长",
+                            "updated_at": datetime.now().astimezone(),
+                            "token_usage": token_usage,
+                            "charged_credits": charged_credits,
+                            "error_message": reason + "未生成可交给数字人的文案，请稍后重试。",
+                        }
+                    )
+                    self._save(task, on_progress)
+                    return task
+                results = [compressed_text]
+                compliance_notes = [
+                    *compliance_notes,
+                    "已通过 AI 二次语义压缩达到目标字数。",
+                ]
             attention_terms = self._attention_terms(results, latest_attention_terms)
             if attention_terms:
                 compliance_notes = [

@@ -1,7 +1,0 @@
-{
-  "streams": [
-    {"codec_type": "video", "width": 720, "height": 1280},
-    {"codec_type": "audio"}
-  ],
-  "format": {"duration": "31.500000"}
-}

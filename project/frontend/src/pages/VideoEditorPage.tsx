@@ -474,43 +474,6 @@ function normalizePlan(item?: CloudBatchItem | null): EditPlanStep[] {
   return normalized.length ? normalized : DEFAULT_PLAN;
 }
 
-function recommendReviewBgm(
-  item: CloudBatchItem,
-  assets: VideoEditorBgmAsset[],
-): VideoEditorBgmAsset | null {
-  const usableAssets = assets.filter((asset) => asset.content_id_risk !== "registered");
-  if (!usableAssets.length) return null;
-
-  const plan = item.edit_plan as unknown as Record<string, unknown> | null | undefined;
-  const planCategory = typeof plan?.bgm_category === "string"
-    ? plan.bgm_category.trim()
-    : "";
-  const transcript = (item.subtitle_segments || []).map((segment) => segment.text).join(" ");
-  const text = `${item.selected_title || ""} ${item.title || ""} ${transcript} ${
-    typeof plan?.explanation === "string" ? plan.explanation : ""
-  }`;
-  const inferredCategory = planCategory
-    || (/人工智能|AI|机器人|科技|智能|数智/i.test(text)
-      ? "科技未来"
-      : /商业|企业|老板|品牌|营销|获客|客户|市场|销售/.test(text)
-        ? "商业表达"
-        : /情绪|共鸣|焦虑|治愈|温柔/.test(text)
-          ? "情绪共鸣"
-          : /故事|经历|曾经|后来|回忆/.test(text)
-            ? "故事叙事"
-            : /成长|励志|坚持|成功/.test(text)
-              ? "励志成长"
-              : /真相|揭秘|为什么|竟然/.test(text)
-                ? "悬念揭秘"
-                : /日常|生活|轻松/.test(text)
-                  ? "轻松日常"
-                  : "理性干货");
-
-  return usableAssets.find((asset) => asset.voiceover_category === inferredCategory)
-    || usableAssets.find((asset) => asset.voiceover_category === "通用口播")
-    || usableAssets[0];
-}
-
 function normalizeSubtitleSegments(item?: CloudBatchItem | null): TranscriptSegment[] {
   if (!item || !Array.isArray(item.subtitle_segments)) return [];
   const emphasisBySegment = new Map(
@@ -1804,7 +1767,7 @@ export default function VideoEditorPage() {
         sourceIds: [selectedSourceId],
         targetPlatform: platform,
         outputProfile,
-        stylePresetId: "talking-head-grammar-only-v1",
+        stylePresetId: "talking-head-semantic-adaptive-v1",
         quoteId: quote.quote_id,
         billingConfirmation: {
           confirmed: true,
@@ -2495,7 +2458,7 @@ export default function VideoEditorPage() {
                 )}
                 {activeMotionEvent && (
                   <div
-                    className={`video-editor-motion-accent video-editor-motion-${activeMotionEvent.style_id}`}
+                    className={`video-editor-motion-accent video-editor-motion-${activeMotionEvent.style_id} video-editor-motion-verb-${activeMotionEvent.visual_verb || "legacy"}`}
                     data-testid="semantic-motion-accent"
                     aria-hidden="true"
                   >
@@ -2671,6 +2634,42 @@ export default function VideoEditorPage() {
             {currentItem?.edit_plan?.director_plan && (
               <Card size="small" data-testid="director-plan-summary">
                 <Space direction="vertical" size={5} style={{ width: "100%" }}>
+                  {(() => {
+                    const semanticDirector = currentItem.edit_plan.director_plan?.semantic_director;
+                    const creativeDirector = currentItem.edit_plan.director_plan?.creative_director;
+                    const providerUsed = semanticDirector?.provider === "minimax"
+                      && String(semanticDirector.status || "").startsWith("used");
+                    const previewReview = currentItem.edit_plan.director_plan?.director_preview_review;
+                    const previewReviewCompleted = previewReview?.status === "completed"
+                      && previewReview.preview_rendered === true;
+                    return (
+                      <Space wrap>
+                        <Tag color={providerUsed ? "green" : "gold"}>
+                          {providerUsed ? "智能导演已生成提案" : "本地安全方案"}
+                        </Tag>
+                        <Tag>
+                          语义理解 {semanticDirector?.provider_annotation_count ?? 0} / {semanticDirector?.input_segment_count ?? 0}
+                        </Tag>
+                        <Tag color="orange">
+                          接受 {creativeDirector?.compiled_count ?? semanticDirector?.compiled_count ?? 0}
+                        </Tag>
+                        {(creativeDirector?.rejected_count ?? semanticDirector?.rejected_count ?? 0) > 0 && (
+                          <Tag color="red">
+                            已拒绝 {creativeDirector?.rejected_count ?? semanticDirector?.rejected_count ?? 0}
+                          </Tag>
+                        )}
+                        <Tag color={!providerUsed ? undefined : previewReviewCompleted ? "green" : previewReview?.status === "failed" ? "red" : "blue"}>
+                          {!providerUsed
+                            ? "低清复核不适用"
+                            : previewReviewCompleted
+                              ? "低清复核已完成"
+                              : previewReview?.status === "failed"
+                                ? "低清复核未通过"
+                                : "低清复核待执行"}
+                        </Tag>
+                      </Space>
+                    );
+                  })()}
                   <Space wrap>
                     <Text strong>AI 导演计划：</Text>
                     <Tag color="purple">{currentItem.edit_plan.director_plan.plan_version}</Tag>
@@ -2685,6 +2684,16 @@ export default function VideoEditorPage() {
                   </Space>
                   <Text type="secondary">
                     钩子使用原片完整原话，只出现一次；字幕、画面和配乐共用一条时间轴。
+                  </Text>
+                  {currentItem.edit_plan.director_plan.cache_upgrade_notice && (
+                    <Text type="warning">
+                      {currentItem.edit_plan.director_plan.cache_upgrade_notice}
+                    </Text>
+                  )}
+                  <Text type="secondary">
+                    {currentItem.edit_plan.director_plan.semantic_director?.provider === "minimax"
+                      ? "已完成语义理解 → 已生成剪辑提案 → 已通过本地检查；低清复核和正式渲染会继续显示真实状态。"
+                      : "已完成语义理解；当前没有可用的 MiniMax 提案，已保留人物主镜头和安全降级。"}
                   </Text>
                   <Text type="secondary">
                     {currentItem.edit_plan.director_plan.asset_requests?.length
@@ -3320,6 +3329,38 @@ export default function VideoEditorPage() {
         @keyframes video-editor-motion-stamp{0%{opacity:0;transform:translate(-50%,-50%) scale(.72) rotate(-8deg)}72%{opacity:1;transform:translate(-50%,-50%) scale(1.06) rotate(2deg)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1) rotate(0)}}
         @keyframes video-editor-motion-burst{0%{opacity:0;transform:translate(-50%,-50%) scale(.65)}100%{opacity:.94;transform:translate(-50%,-50%) scale(1)}}
         @keyframes video-editor-motion-shake{0%,100%{transform:translate(-50%,-50%) translateX(0)}25%{transform:translate(-50%,-50%) translateX(-5px) rotate(-1deg)}50%{transform:translate(-50%,-50%) translateX(5px) rotate(1deg)}75%{transform:translate(-50%,-50%) translateX(-3px)}}
+        /* New semantic visual verbs: restrained linework attached to the caption, not a floating badge. */
+        .video-editor-motion-accent[class*="video-editor-motion-verb-"]{left:50%;top:70%;width:46%;height:14%;opacity:.84;filter:none;animation:video-editor-motion-accent-in 180ms ease-out both}
+        .video-editor-motion-accent[class*="video-editor-motion-verb-"]::before,.video-editor-motion-accent[class*="video-editor-motion-verb-"]::after{display:none!important}
+        .video-editor-motion-accent[class*="video-editor-motion-verb-"] .motion-ray{left:auto;top:auto;width:auto;height:2px;margin:0;border-radius:1px;background:var(--motion-accent-color,#e7c77b);box-shadow:none;opacity:.82;transform-origin:left center}
+        .video-editor-motion-verb-reveal{--motion-accent-color:#c9b8f2}
+        .video-editor-motion-verb-reveal .motion-ray:nth-child(1){left:32%;top:64%;width:4px;height:28%;transform:none}
+        .video-editor-motion-verb-reveal .motion-ray:nth-child(2){left:48%;top:45%;width:4px;height:47%;transform:none}
+        .video-editor-motion-verb-reveal .motion-ray:nth-child(3){left:64%;top:22%;width:4px;height:70%;transform:none}
+        .video-editor-motion-verb-accumulate{--motion-accent-color:#a9d9c4}
+        .video-editor-motion-verb-accumulate .motion-ray:nth-child(1){left:31%;top:60%;width:5px;height:32%;transform:none}
+        .video-editor-motion-verb-accumulate .motion-ray:nth-child(2){left:48%;top:43%;width:5px;height:49%;transform:none}
+        .video-editor-motion-verb-accumulate .motion-ray:nth-child(3){left:65%;top:25%;width:5px;height:67%;transform:none}
+        .video-editor-motion-verb-compare{--motion-accent-color:#f0bd9e}
+        .video-editor-motion-verb-compare .motion-ray:nth-child(1){left:17%;top:31%;width:30%;height:2px;transform:none}
+        .video-editor-motion-verb-compare .motion-ray:nth-child(2){left:53%;top:65%;width:30%;height:2px;transform:none}
+        .video-editor-motion-verb-compare .motion-ray:nth-child(3){left:47%;top:18%;width:2px;height:68%;transform:rotate(27deg)}
+        .video-editor-motion-verb-flow{--motion-accent-color:#b9d5ff}
+        .video-editor-motion-verb-flow .motion-ray:nth-child(1){left:22%;top:22%;width:48%;height:52%;border-top:2px solid var(--motion-accent-color);border-right:2px solid var(--motion-accent-color);background:transparent;border-radius:0 80% 0 0;transform:none;opacity:.58}
+        .video-editor-motion-verb-flow .motion-ray:nth-child(2){left:58%;top:46%;width:20%;height:2px;transform:none}
+        .video-editor-motion-verb-flow .motion-ray:nth-child(3){left:75%;top:39%;width:10%;height:10px;border-top:2px solid var(--motion-accent-color);border-right:2px solid var(--motion-accent-color);background:transparent;transform:rotate(45deg);opacity:.82}
+        .video-editor-motion-verb-impact{--motion-accent-color:#f0c56f}
+        .video-editor-motion-verb-impact .motion-ray:nth-child(1){left:25%;top:73%;width:50%;height:3px;transform:rotate(-2deg)}
+        .video-editor-motion-verb-impact .motion-ray:nth-child(2){left:38%;top:39%;width:18%;height:2px;transform:rotate(-40deg)}
+        .video-editor-motion-verb-impact .motion-ray:nth-child(3){left:58%;top:42%;width:18%;height:2px;transform:rotate(38deg)}
+        .video-editor-motion-verb-resolve{--motion-accent-color:#9fd7bd}
+        .video-editor-motion-verb-resolve .motion-ray:nth-child(1){left:27%;top:48%;width:18%;height:3px;transform:rotate(42deg)}
+        .video-editor-motion-verb-resolve .motion-ray:nth-child(2){left:39%;top:57%;width:30%;height:3px;transform:rotate(-47deg)}
+        .video-editor-motion-verb-resolve .motion-ray:nth-child(3){left:62%;top:69%;width:21%;height:2px;transform:none;opacity:.48}
+        .video-editor-motion-verb-warning{--motion-accent-color:#e7a49b}
+        .video-editor-motion-verb-warning .motion-ray:nth-child(1){left:48%;top:15%;width:2px;height:70%;transform:rotate(26deg)}
+        .video-editor-motion-verb-warning .motion-ray:nth-child(2){left:25%;top:34%;width:18%;height:2px;transform:rotate(-8deg);opacity:.45}
+        .video-editor-motion-verb-warning .motion-ray:nth-child(3){left:59%;top:70%;width:18%;height:2px;transform:rotate(-8deg);opacity:.45}
          .video-editor-preview-footer{display:flex;flex:none;padding:7px 16px 9px;border-top:1px solid rgba(255,255,255,.1);background:#151a24}
         .video-editor-preview-footer .ant-typography,.video-editor-preview-footer .ant-btn{color:#f8fafc}
         .video-editor-timeline-time{flex:none;font-variant-numeric:tabular-nums;white-space:nowrap}

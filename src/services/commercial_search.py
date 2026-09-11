@@ -21,6 +21,7 @@ from src.models import (
     PlatformSearchRun,
     ProviderErrorKind,
     ProviderMode,
+    ProviderSearchItem,
     ProviderSearchError,
     ProviderSearchPage,
     SamplingCheckpoint,
