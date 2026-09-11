@@ -241,6 +241,7 @@ Python 测试和静态检查：
 - 该安装包绑定控制层地址 https://xmt.syszr.cn，但不包含永久供应商密钥、密码、Token 或 SSH 私钥。公司凭据仍从公司控制层/公司密钥管理系统提供。
 - 正式安装包启用公司控制层时不是供应商 Sandbox：转写、云剪辑和文案分别使用 cloud、aliyun、production；Electron 的 sandbox 仅表示渲染进程安全隔离。
 - 本机已验证解包版启动后 /health 返回 200 且 control_plane_enabled=true；正式登录、激活码、供应商调用和剪辑业务仍须在公司电脑上验收。
+- 当前外部依赖状态（2026-09-11）：对 https://xmt.syszr.cn/health 的两次检查均返回 502；只读 SSH 检查显示 videoinsight-control-plane.service 为 inactive/dead。恢复服务器服务和 HTTPS 反向代理后，才能验收云端业务；不要把客户端改回 Sandbox 当作替代方案。
 
 重新打包除了源码开发依赖，还需要：
 1. Python 3.12+ 和根目录 .venv。

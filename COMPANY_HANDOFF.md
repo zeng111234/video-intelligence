@@ -891,9 +891,15 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 
 `全量 Python 测试：PASS（可选历史 work/证据缺失时按规则跳过）`；
 
+`本机正式桌面包启动与客户包安全校验：PASS（control_plane_enabled=true，未包含个人密钥）`；
+
+`公司控制层当前可用性：FAIL（2026-09-11 检查 https://xmt.syszr.cn/health 两次均返回 502；只读 SSH 显示 videoinsight-control-plane.service 为 inactive/dead，进程被 SIGTERM 结束）`；
+
 `正式视频剪辑 quote → user_confirm → generation → export → 页面播放 → 下载：PENDING（尚未在公司账号和公司电脑完成）`；
 
 `公司实际电脑验收：PENDING（尚未在客户电脑完成）`。
+
+在控制层服务恢复前，不要把“客户端能启动”表述成“云端业务已跑通”，也不要把客户端改回供应商 Sandbox 作为绕过方案。公司运维应先恢复控制层进程和 HTTPS 反向代理，再重新执行 `/health`、客户登录、激活码、积分、转写授权和正式剪辑验收。
 
 ### 21.3 GitHub 分支与工作区一致性
 
