@@ -228,23 +228,66 @@ $runtimePointer = Join-Path $installRoot "runtime-location.json"
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "VideoInsight.lnk"
 $startShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "VideoInsight\VideoInsight.lnk"
 
-# 新版桌面程序每次选择空闲本机端口；旧版没有状态文件时仍兼容 1001。
-if (Test-SafeLeaf -LiteralPath $runtimeState) {
-    try {
-        $state = Get-Content -LiteralPath $runtimeState -Raw | ConvertFrom-Json
-        $candidatePort = [int]$state.port
-        $candidateProcess = Get-Process -Id ([int]$state.pid) -ErrorAction SilentlyContinue
-        if (
-            $state.schema_version -eq 1 -and
-            $candidatePort -ge 1024 -and
-            $candidatePort -le 65535 -and
-            $candidateProcess
-        ) {
-            $script:ServicePort = $candidatePort
-        }
+# 从运行时记录解析出后端端口（0.2.52）。
+#
+# 新版桌面程序每次选择空闲本机端口，端口号只在 desktop-runtime.json 里。
+# 这个函数会被反复调用：后端要先导入整个应用和 uvicorn 才写这份记录，干净电脑
+# 上可能超过安装器预等的 15 秒。如果只在启动时读一次，记录还没写出来就会固定
+# 用 1001，之后即使后端正常起来，90 秒轮询也一直在探错误的端口——表现就是
+# "后端未就绪" + 登录页 404。
+function Update-ServicePortFromRuntimeRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$RuntimeStatePath,
+        [string]$InstalledAfterUtc = ""
+    )
+
+    if (-not (Test-SafeLeaf -LiteralPath $RuntimeStatePath)) {
+        return $false
     }
-    catch { }
+    try {
+        $state = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
+        $candidatePort = [int]$state.port
+        $recordedPid = [int]$state.pid
+        $candidateProcess = Get-Process -Id $recordedPid -ErrorAction SilentlyContinue
+        if (
+            $state.schema_version -ne 1 -or
+            $candidatePort -lt 1024 -or
+            $candidatePort -gt 65535 -or
+            -not $candidateProcess
+        ) {
+            return $false
+        }
+        if (-not [string]::IsNullOrWhiteSpace($InstalledAfterUtc)) {
+            $startedAtValue = [string]$state.started_at
+            if ([string]::IsNullOrWhiteSpace($startedAtValue)) {
+                return $false
+            }
+            $startedAfter = $false
+            try {
+                $startedAfter = (
+                    [DateTime]::Parse($startedAtValue).ToUniversalTime() -ge
+                    [DateTime]::Parse($InstalledAfterUtc).ToUniversalTime()
+                )
+            }
+            catch {
+                $startedAfter = $false
+            }
+            if (-not $startedAfter) {
+                return $false
+            }
+        }
+        $script:ServicePort = $candidatePort
+        $script:ServiceOrigin = "http://127.0.0.1:$candidatePort"
+        return $true
+    }
+    catch {
+        return $false
+    }
 }
+
+Update-ServicePortFromRuntimeRecord `
+    -RuntimeStatePath $runtimeState `
+    -InstalledAfterUtc $InstalledAfterUtc | Out-Null
 $script:ServiceOrigin = "http://127.0.0.1:$script:ServicePort"
 
 # 运行时记录必须确实是"这次安装"产生的（0.2.52）。
@@ -415,6 +458,11 @@ $healthValid = $false
 $healthDeadline = (Get-Date).AddSeconds(90)
 $healthStartedAt = Get-Date
 while ((Get-Date) -lt $healthDeadline) {
+    # 每轮都重新解析一次运行时记录：后端写好记录之前，端口号是未知的。
+    # 只在开头读一次会让剩下的等待全部探错端口。
+    Update-ServicePortFromRuntimeRecord `
+        -RuntimeStatePath $runtimeState `
+        -InstalledAfterUtc $InstalledAfterUtc | Out-Null
     $health = Get-LocalHealth
     if (
         $health -and

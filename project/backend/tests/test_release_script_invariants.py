@@ -3319,15 +3319,72 @@ def test_installer_ignores_ports_owned_by_other_programs():
 
 
 def test_installer_matches_quoted_user_data_dir_arguments():
-    """Chrome 对含空格的路径会加引号，子串匹配会漏掉这种最常见的形式。"""
-    script_text = (
-        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
-    ).read_text(encoding="utf-8-sig")
+    """Chrome 的三种参数写法都必须能解析出正确路径。
 
-    assert "function Get-UserDataDirFromCommandLine" in script_text
-    # 必须同时接受带引号与不带引号两种写法。
-    assert "--user-data-dir=" in script_text
-    assert "regex" in script_text.lower()
+    只做子串匹配、或正则顺序不对，都会在"整段参数加引号"这种 Windows 常见
+    形式下截断到空格或带上结尾引号，导致遗留浏览器回收不掉。
+    这里实际执行函数并逐一核对结果，而不是检查源码里有没有 regex。
+    """
+    script_path = REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    cases = [
+        # (命令行, 期望解析结果)
+        (r"--user-data-dir=C:\profile", r"C:\profile"),
+        (
+            r'--user-data-dir="C:\path with space"',
+            r"C:\path with space",
+        ),
+        (
+            r'"C:\Program Files\Google\Chrome\chrome.exe" '
+            r'"--user-data-dir=C:\path with space"',
+            r"C:\path with space",
+        ),
+        (
+            r'"C:\Program Files\Google\Chrome\chrome.exe" '
+            r'"--user-data-dir=C:\profile"',
+            r"C:\profile",
+        ),
+        (
+            r'"C:\Program Files\Google\Chrome\chrome.exe" '
+            r'--user-data-dir=C:\profile --remote-debugging-port=9222',
+            r"C:\profile",
+        ),
+        # 没有该参数：必须解析为空，绝不能误判成"有主"。
+        (r'"C:\Program Files\Google\Chrome\chrome.exe" --some-other-flag', ""),
+    ]
+    payload = json.dumps(cases, ensure_ascii=False)
+    escaped_script = str(script_path).replace("'", "''")
+    escaped_payload = payload.replace("'", "''")
+    command = (
+        _powershell_function_loader(
+            script_path, ("Get-UserDataDirFromCommandLine",)
+        )
+        + f"$cases = ConvertFrom-Json '{escaped_payload}'; "
+        "$out = @(); "
+        "foreach ($case in $cases) { "
+        "$got = Get-UserDataDirFromCommandLine -CommandLine $case[0]; "
+        "$out += [pscustomobject]@{ "
+        "line = $case[0]; want = $case[1]; got = $got; "
+        "ok = ([string]$got -eq [string]$case[1]) } }; "
+        "$out | ConvertTo-Json -Compress -Depth 5"
+    )
+    result = subprocess.run(
+        [_powershell(), "-NoProfile", "-Command", command],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    outcomes = json.loads(result.stdout.strip())
+    if isinstance(outcomes, dict):
+        outcomes = [outcomes]
+    failures = [item for item in outcomes if not item["ok"]]
+    assert not failures, "; ".join(
+        f"line={item['line']!r} got={item['got']!r} want={item['want']!r}"
+        for item in failures
+    )
 
 
 def test_verifier_waits_long_enough_for_a_clean_first_start():
@@ -3340,6 +3397,37 @@ def test_verifier_waits_long_enough_for_a_clean_first_start():
     assert "AddSeconds(90)" in script_text
     # 不能退回"探一次 + 固定睡 5 秒"的老写法。
     assert "Start-Sleep -Seconds 5\n    $health = Get-LocalHealth" not in script_text
+
+
+def test_verifier_rediscovers_the_dynamic_port_while_waiting():
+    """后端写完 desktop-runtime.json 才会有端口号。
+
+    只在启动时读一次，慢机器上记录还没出现就会固定用 1001，之后 90 秒轮询
+    一直探错端口——表现就是"后端未就绪"加登录页 404。
+    """
+    script_text = (
+        REPOSITORY_ROOT / "scripts" / "verify_windows_install.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "function Update-ServicePortFromRuntimeRecord" in script_text
+    occurrences = script_text.count("Update-ServicePortFromRuntimeRecord `")
+    assert occurrences >= 2, "端口解析必须既在开头调用，也在等待循环内调用"
+
+    # 等待循环里必须重新解析端口。
+    loop_body = script_text[
+        script_text.index("$healthDeadline = (Get-Date).AddSeconds(90)") :
+        script_text.index('Add-Check `\n    -Name "Local service health"')
+    ]
+    assert "Update-ServicePortFromRuntimeRecord" in loop_body, (
+        "等待循环内必须重新发现端口"
+    )
+
+    # 安装器给运行时记录的等待时间必须足够长（不再是 15 秒）。
+    installer_text = (
+        REPOSITORY_ROOT / "scripts" / "install_windows_desktop.ps1"
+    ).read_text(encoding="utf-8-sig")
+    assert "AddSeconds(60)" in installer_text
+    assert "$attempt -lt 60" not in installer_text, "不得退回 60×250ms 的 15 秒等待"
 
 
 def test_lifespan_reclaims_browsers_before_resuming_queues():

@@ -611,22 +611,34 @@ function Resolve-ActiveTasksBeforeUpdate {
 function Get-UserDataDirFromCommandLine {
     param([AllowEmptyString()][string]$CommandLine)
 
-    # Chrome 在路径含空格时会加引号：--user-data-dir="C:\a b\profile"。
-    # 只做子串匹配会漏掉这种最常见的形式，导致遗留浏览器回收不掉。
-    # 这里把值提取出来（带引号与不带引号都支持）再比较。
+    # 提取 --user-data-dir 的值。Windows 上有三种常见写法，必须都支持：
+    #
+    #   1) 整段参数被引号包住："--user-data-dir=C:\path with space"
+    #   2) 只给值加引号：   --user-data-dir="C:\path with space"
+    #   3) 不带引号：       --user-data-dir=C:\profile
+    #
+    # 顺序不能颠倒。若先匹配第 3 种，第 1 种会在第一个空格处被截断（得到
+    # C:\path），而不含空格时又会把结尾的引号带进值里（得到 C:\profile"）。
+    # 这两种都会让遗留浏览器匹配不上、profile 锁回收不掉。
     if ([string]::IsNullOrWhiteSpace($CommandLine)) {
         return ""
     }
-    $match = [regex]::Match(
-        $CommandLine,
-        '--user-data-dir=(?:"([^"]+)"|(\S+))',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    $patterns = @(
+        '"--user-data-dir=([^"]+)"',
+        '--user-data-dir="([^"]+)"',
+        '--user-data-dir=([^\s"]+)'
     )
-    if (-not $match.Success) {
-        return ""
+    foreach ($pattern in $patterns) {
+        $match = [regex]::Match(
+            $CommandLine,
+            $pattern,
+            [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+        )
+        if ($match.Success) {
+            return ([string]$match.Groups[1].Value).Replace("/", "\").TrimEnd("\")
+        }
     }
-    $value = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
-    return ([string]$value).Replace("/", "\").TrimEnd("\")
+    return ""
 }
 
 function Stop-OwnedBrowsers {
@@ -1179,11 +1191,27 @@ try {
     New-Item -ItemType Directory -Path $verificationReportDirectory -Force | Out-Null
     $verificationReport = Join-Path $verificationReportDirectory ("install-acceptance-{0}.txt" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
     $runtimeState = Join-Path $RuntimeRoot "data\desktop-runtime.json"
-    for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        if (
-            (Test-Path -LiteralPath $runtimeState -PathType Leaf) -and
-            (Get-Item -LiteralPath $runtimeState).LastWriteTimeUtc -ge $desktopStartedAtUtc
-        ) { break }
+    # 等新版本写出运行时记录。后端要先导入整个应用和 uvicorn 才写这份记录，
+    # 干净电脑上 15 秒不一定够；给 60 秒，并且确认记录确实是本次启动之后写的、
+    # 内容可解析、端口合法，避免拿到一份旧记录就往下走。
+    # 即便这里超时，验收脚本的轮询里也会继续重新发现端口。
+    $recordDeadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $recordDeadline) {
+        if (Test-Path -LiteralPath $runtimeState -PathType Leaf) {
+            $stateFile = Get-Item -LiteralPath $runtimeState
+            if ($stateFile.LastWriteTimeUtc -ge $desktopStartedAtUtc) {
+                try {
+                    $probe = Get-Content -LiteralPath $runtimeState -Raw | ConvertFrom-Json
+                    $probePort = [int]$probe.port
+                    if ($probePort -ge 1024 -and $probePort -le 65535) {
+                        break
+                    }
+                }
+                catch {
+                    # 记录可能正在写入，下一轮再读。
+                }
+            }
+        }
         Start-Sleep -Milliseconds 250
     }
     & $verificationPowerShell `
