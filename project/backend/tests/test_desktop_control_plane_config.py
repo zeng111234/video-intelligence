@@ -102,6 +102,7 @@ def test_windows_packaging_drops_pyarrow_test_fixtures():
     )
     assert 'Join-Path $desktopBackend "VideoInsightBackend\\_internal\\pyarrow\\tests"' in script
     assert 'Remove-Item -LiteralPath $pyarrowTestData -Recurse -Force' in script
+    assert "--exclude-module pyarrow" in script
 
 
 def test_restart_script_preserves_desktop_mode_and_does_not_probe_auth_only_capability():

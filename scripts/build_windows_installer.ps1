@@ -171,6 +171,7 @@ try {
         --hidden-import project.backend.app.services.remote_avatar `
         --hidden-import project.backend.app.services.remote_copywriting `
         --hidden-import project.backend.app.services.remote_video_editor `
+        --exclude-module pyarrow `
         --collect-all jieba `
         scripts/desktop_launcher.py
     if ($LASTEXITCODE -ne 0) { throw "本地服务打包失败" }
