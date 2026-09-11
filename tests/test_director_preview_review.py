@@ -25,6 +25,10 @@ def test_preview_review_is_called_once_and_cannot_change_subtitle_fact():
                         "value": "static",
                         "semantic_text": "伪造字幕",
                     },
+                    {
+                        "event_id": "evt-1",
+                        "action": "invent_overlay",
+                    },
                 ],
             }
 
@@ -36,6 +40,7 @@ def test_preview_review_is_called_once_and_cannot_change_subtitle_fact():
         subtitle_text=[{"text": "原始字幕"}],
     )
     assert review["status"] == "completed"
+    assert review["review_rejections"][0]["reason"] == "action_not_allowed"
     assert len(calls) == 1
     assert review_director_preview_once(
         engine,
@@ -60,4 +65,7 @@ def test_preview_review_is_called_once_and_cannot_change_subtitle_fact():
         review,
     )
     assert updated["asset_events"][0]["layout"] == "large_pip_right"
-    assert updated["review_rejections"][0]["reason"] == "subtitle_fact_is_immutable"
+    assert {item["reason"] for item in updated["review_rejections"]} == {
+        "action_not_allowed",
+        "subtitle_fact_is_immutable",
+    }

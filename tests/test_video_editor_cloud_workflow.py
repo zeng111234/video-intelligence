@@ -18,6 +18,11 @@ from src.repositories.sqlite import SQLiteRepository
 from src.services.video_editor_cloud import (
     CloudEditorConfiguration,
     CloudProviderMode,
+    CloudTranscript,
+    ProviderJobSnapshot,
+    ProviderJobStatus,
+    TimeRange,
+    TranscriptSegment,
 )
 from src.services.video_editor_workflow import (
     VideoEditorWorkflowError,
@@ -243,6 +248,79 @@ def test_sandbox_flow_is_idempotent_and_never_publishable(tmp_path: Path):
             created["batch_id"],
             [item["item_id"]],
         )
+
+
+def test_minimax_creative_plan_is_visible_before_confirmation(tmp_path: Path):
+    service = _service(tmp_path)
+    source_id = _source(service)
+    quote = _quote(service, source_id)
+    created = _create(service, source_id, quote, key="minimax-analysis-plan")
+    batch = service.repository.get_video_editor_batch(created["batch_id"])
+    assert batch is not None
+    item = batch.items[0]
+
+    proposal = {
+        "proposal_id": "creative-before-confirm",
+        "source_segment_index": 0,
+        "semantic_text": "priceup",
+        "importance": 0.9,
+        "event_type": "warning_emphasis",
+        "layout": "caption_integrated",
+        "caption_treatment": "shake_keyword",
+        "keyword": "up",
+        "visual_type": "none",
+        "camera_motion": "punch_in_light",
+        "transition": "hard_cut",
+        "asset_query": None,
+        "sfx": "warning_hit",
+        "preferred_duration_seconds": 0.7,
+        "reason": "先强调风险变化",
+    }
+    service._annotate_semantic_director = lambda *args, **kwargs: (  # type: ignore[method-assign]
+        [],
+        {
+            "provider": "minimax",
+            "model": "fake-minimax",
+            "status": "used",
+            "version": "semantic-director-v2",
+            "creative_proposals": [proposal],
+        },
+    )
+
+    base_providers = service._cloud_providers_override
+
+    class FakeASR:
+        def fetch_result(self, _snapshot):
+            return CloudTranscript(
+                provider_name="fake-asr",
+                transcript="priceup",
+                segments=[
+                    TranscriptSegment(start=0.0, end=2.0, text="priceup")
+                ],
+                spoken_ranges=[TimeRange(start=0.0, end=2.0)],
+                duration_seconds=4.0,
+                is_mock=True,
+            )
+
+    service._cloud_runtime = lambda: (  # type: ignore[method-assign]
+        service._cloud_configuration_override,
+        SimpleNamespace(asr=FakeASR(), edit_plan=base_providers.edit_plan),
+    )
+    snapshot = ProviderJobSnapshot(
+        provider_name="fake-asr",
+        provider_job_id="fake-job",
+        provider_stage="succeeded",
+        status=ProviderJobStatus.SUCCEEDED,
+        is_mock=True,
+    )
+
+    completed = service._complete_cloud_analysis(batch, item, snapshot)
+    plan = completed.items[0].edit_plan["director_plan"]
+
+    assert plan["semantic_director"]["provider"] == "minimax"
+    assert plan["creative_director"]["compiled_count"] == 1
+    assert plan["motion_events"][0]["source"] == "minimax_creative_director"
+    assert completed.items[0].edit_plan["visual_beats"][0]["camera_action"] == "punch_in_soft"
 
 
 def test_broll_review_forces_local_renderer_instead_of_dropping_overlay(

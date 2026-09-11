@@ -369,6 +369,10 @@ def compile_creative_proposals(
                     {
                         **base,
                         "event_id": f"evt-asset-{proposal_id}",
+                        "type": "broll_fullscreen"
+                        if mode == "full"
+                        else "broll_pip",
+                        "kind": event_type,
                         "asset_id": asset_id,
                         "mode": mode,
                         "visual_type": visual_type,

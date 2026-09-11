@@ -152,6 +152,52 @@ def test_partial_minimax_response_is_completed_locally_and_reported_as_partial()
     assert partial_meta["missing_segment_indices"] == [1]
 
 
+def test_creative_proposals_are_kept_when_provider_returns_no_annotation_rows():
+    class CreativeOnlyEngine:
+        model = "MiniMax-M3"
+
+        def annotate_semantic_timeline(self, **kwargs):
+            return {
+                "annotations": [],
+                "creative_proposals": [{
+                    "proposal_id": "creative-only-1",
+                    "source_segment_index": 0,
+                    "semantic_text": "价格上涨",
+                    "importance": 0.9,
+                    "event_type": "warning_emphasis",
+                    "layout": "caption_integrated",
+                    "caption_treatment": "shake_keyword",
+                    "keyword": "上涨",
+                    "visual_type": "none",
+                    "camera_motion": "punch_in_light",
+                    "transition": "hard_cut",
+                    "asset_query": None,
+                    "sfx": "warning_hit",
+                    "preferred_duration_seconds": 0.7,
+                    "reason": "直接强调风险变化",
+                }],
+            }
+
+    annotations, meta = annotate_with_semantic_director(
+        [{"start": 0.0, "end": 2.0, "text": "价格上涨"}],
+        duration_seconds=2.0,
+        engine=CreativeOnlyEngine(),
+        fallback=lambda: [{
+            "source_segment_index": 0,
+            "semantic_text": "价格",
+            "semantic_roles": ["PRICE"],
+            "importance": 0.6,
+        }],
+    )
+
+    assert meta["provider"] == "minimax"
+    assert meta["provider_output_accepted"] is True
+    assert meta["status"] == "used_partial"
+    assert meta["proposal_count"] == 1
+    assert meta["creative_proposals"][0]["proposal_id"] == "creative-only-1"
+    assert annotations[0]["provider"] == "local_rules"
+
+
 def test_minimax_director_timeout_is_bounded(monkeypatch):
     """The ceiling must fit a real multi-modal direction request.
 
@@ -270,6 +316,7 @@ def test_creative_proposal_keeps_exact_source_phrase_and_asset_allowlist():
                 "asset_id": "asset-1",
                 "asset_query": None,
                 "sfx": "soft_impact",
+                "sfx_asset_id": "sound-1",
                 "preferred_duration_seconds": 0.7,
                 "reason": "绑定原话风险点",
             }]
@@ -279,6 +326,55 @@ def test_creative_proposal_keeps_exact_source_phrase_and_asset_allowlist():
     )
     assert accepted[0]["semantic_text"] == "业务员离职"
     assert accepted[0]["asset_id"] == "asset-1"
+    assert accepted[0]["sfx_asset_id"] == "sound-1"
+
+
+def test_creative_proposal_keeps_chinese_ordinals_and_compound_money_units():
+    common = {
+        "importance": 0.8,
+        "event_type": "process_visual",
+        "layout": "caption_integrated",
+        "caption_treatment": "fade_in",
+        "visual_type": "none",
+        "camera_motion": "none",
+        "transition": "none",
+        "asset_query": None,
+        "sfx": "none",
+        "preferred_duration_seconds": 0.7,
+        "reason": "保留原文事实",
+    }
+    segments = [
+        {"start": 0.0, "end": 3.0, "text": "第一步先看预算，第二步再看用途"},
+        {"start": 3.0, "end": 6.0, "text": "最多便宜3.5万元"},
+    ]
+    accepted, rejected = validate_creative_proposals(
+        {
+            "creative_proposals": [
+                {
+                    **common,
+                    "proposal_id": "drop-ordinal",
+                    "source_segment_index": 0,
+                    "semantic_text": "看预算",
+                    "keyword": "看预算",
+                },
+                {
+                    **common,
+                    "proposal_id": "drop-unit",
+                    "source_segment_index": 1,
+                    "semantic_text": "最多便宜3.5万",
+                    "keyword": "3.5万",
+                },
+            ]
+        },
+        segments,
+        return_rejections=True,
+    )
+
+    assert accepted == []
+    assert {item["reason"] for item in rejected} == {
+        "ordinal_or_sequence_not_preserved",
+        "amount_or_unit_not_preserved",
+    }
 
 
 def test_keyframe_sampler_is_bounded_and_marks_safe_zone_fallback(tmp_path, monkeypatch):

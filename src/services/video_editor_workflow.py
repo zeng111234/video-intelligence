@@ -8521,9 +8521,10 @@ class VideoEditorWorkflowService:
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Run semantic direction at the canonical export boundary.
 
-        MiniMax only describes the spoken content.  The local grammar
-        compiler remains the only component that turns those annotations into
-        executable camera, emphasis, symbol and SFX events.
+        MiniMax proposes transcript-grounded creative treatments.  The local
+        compiler remains the only component that validates those proposals and
+        turns accepted choices into executable camera, emphasis, asset and SFX
+        events; it does not invent a second creative plan on the way to export.
         """
         from src.adapters.llm import DisabledCopywritingEngine
         from src.services.grammar_only import annotate_transcript_segments
@@ -8730,6 +8731,63 @@ class VideoEditorWorkflowService:
         )
         director_plan["semantic_annotations"] = semantic_annotations
         director_plan["semantic_director"] = semantic_director
+        if (
+            plan_payload["style_preset_id"] == "talking-head-semantic-adaptive-v1"
+            and isinstance(semantic_director, Mapping)
+            and semantic_director.get("provider") == "minimax"
+            and str(semantic_director.get("status") or "").startswith("used")
+        ):
+            # Compile once at the analysis boundary as well as at export.  The
+            # compiler is deterministic, so this does not add a model call;
+            # it makes the user-confirmation page display the same accepted
+            # proposal plan that the formal renderer will consume.
+            from src.services.creative_director_compiler import (
+                compile_creative_proposals,
+            )
+
+            compiler_assets: list[dict[str, Any]] = []
+            try:
+                compiler_assets = [
+                    dict(asset)
+                    for asset in self.list_visual_assets("broll")
+                    if isinstance(asset, Mapping) and asset.get("asset_id")
+                ]
+            except Exception:
+                compiler_assets = []
+            creative_director = compile_creative_proposals(
+                semantic_director.get("creative_proposals") or [],
+                segments,
+                duration_seconds=duration_seconds,
+                available_assets=compiler_assets,
+            )
+            director_plan["creative_director"] = creative_director
+            director_plan["motion_events"] = list(
+                creative_director.get("motion_events") or []
+            )
+            director_plan["visual_events"] = list(
+                creative_director.get("asset_events") or []
+            )
+            director_plan["asset_requests"] = list(
+                creative_director.get("asset_requests") or []
+            )
+            director_plan["visual_requests"] = []
+            director_plan["provider_search_log"] = []
+            director_plan["semantic_director"] = {
+                **dict(semantic_director),
+                "proposal_count": creative_director.get("proposal_count", 0),
+                "compiled_count": creative_director.get("compiled_count", 0),
+                "rejected_count": creative_director.get("rejected_count", 0),
+            }
+            plan_payload["visual_beats"] = [
+                dict(event)
+                for event in creative_director.get("camera_events") or []
+                if isinstance(event, Mapping)
+            ]
+            plan_payload["caption_emphasis"] = (
+                _caption_emphasis_items_from_motion_events(
+                    creative_director.get("motion_events") or []
+                )
+            )
         plan_payload["director_plan"] = director_plan
         updated = item.model_copy(
             update={
@@ -11374,6 +11432,8 @@ class VideoEditorWorkflowService:
                 director_plan["asset_requests"] = list(
                     creative_director_result.get("asset_requests") or []
                 )
+                director_plan["visual_requests"] = []
+                director_plan["provider_search_log"] = []
                 shot_plan["visual_requests"] = []
                 shot_plan["provider_search_log"] = []
         if local_grammar_v2:
@@ -11386,8 +11446,9 @@ class VideoEditorWorkflowService:
             director_plan["visual_requests"] = []
             director_plan["provider_search_log"] = []
             director_plan["asset_requests"] = []
-        director_plan["visual_requests"] = [] if grammar_only else shot_plan.get("visual_requests") or []
-        director_plan["provider_search_log"] = [] if grammar_only else shot_plan.get("provider_search_log") or []
+        if not creative_director_provider_active:
+            director_plan["visual_requests"] = [] if grammar_only else shot_plan.get("visual_requests") or []
+            director_plan["provider_search_log"] = [] if grammar_only else shot_plan.get("provider_search_log") or []
         sparse_asset_plan: dict[str, Any] | None = None
         if sparse_asset_mode:
             # Only inspect bytes already present in the local creative-assets
@@ -11437,7 +11498,11 @@ class VideoEditorWorkflowService:
         # coverage with long inserts; short-form clusters may run up to 3.0s
         # so a 30-45s clip can meet its duration-aware 20% visual contract
         # without adding a fourth unrelated asset.
-        if not sparse_asset_mode and len(release_brolls) >= 3:
+        if (
+            not creative_director_provider_active
+            and not sparse_asset_mode
+            and len(release_brolls) >= 3
+        ):
             release_brolls = self._bound_short_rich_release_brolls(
                 release_brolls,
                 max_events=12 if float(media["duration_seconds"]) >= 60.0 else 3,
@@ -11450,8 +11515,14 @@ class VideoEditorWorkflowService:
         # first scene/relationship/product evidence becomes fullscreen, while
         # later evidence remains a safe centered PiP.  No asset is promoted
         # when there is only one cluster or no concrete visual type.
-        if not sparse_asset_mode and len(release_brolls) >= 2 and not any(
-            str(item.get("mode") or "") == "full" for item in release_brolls
+        if (
+            not creative_director_provider_active
+            and not sparse_asset_mode
+            and len(release_brolls) >= 2
+            and not any(
+                str(item.get("mode") or "") == "full"
+                for item in release_brolls
+            )
         ):
             # Shot placements are already the output of the semantic matcher;
             # older placement payloads do not repeat visual_type.  Do not let
@@ -11468,7 +11539,11 @@ class VideoEditorWorkflowService:
             visual_density=str(shot_plan.get("visual_density") or ""),
             duration_seconds=float(media["duration_seconds"]),
         )
-        required_pip_events = 0 if sparse_asset_mode else int(visual_policy.get("min_pip_events", 0))
+        required_pip_events = (
+            0
+            if sparse_asset_mode or creative_director_provider_active
+            else int(visual_policy.get("min_pip_events", 0))
+        )
         pip_events = sum(
             1 for placement in release_brolls
             if str(placement.get("mode") or "") == "pip"
@@ -11487,7 +11562,11 @@ class VideoEditorWorkflowService:
                     "template_minimum_pip_mix"
                 )
                 pip_events += 1
-        required_full_events = 0 if sparse_asset_mode else int(visual_policy.get("min_full_events", 0))
+        required_full_events = (
+            0
+            if sparse_asset_mode or creative_director_provider_active
+            else int(visual_policy.get("min_full_events", 0))
+        )
         full_events = sum(
             1
             for placement in release_brolls
@@ -14599,14 +14678,17 @@ class VideoEditorWorkflowService:
                     if isinstance(director_plan, Mapping)
                     else None
                 )
-                if (
+                creative_provider_active = bool(
                     isinstance(creative_runtime, Mapping)
                     and str(creative_runtime.get("source") or "")
                     == "minimax_creative_director"
                     and isinstance(director_plan.get("semantic_director"), Mapping)
-                    and str(director_plan["semantic_director"].get("provider") or "")
+                    and str(
+                        director_plan["semantic_director"].get("provider") or ""
+                    )
                     == "minimax"
-                ):
+                )
+                if creative_provider_active:
                     compiled_motion_events = [
                         dict(event)
                         for event in creative_runtime.get("motion_events") or []
@@ -14678,7 +14760,11 @@ class VideoEditorWorkflowService:
                 if isinstance(director_plan, Mapping)
                 else None
             ) or []
-            if sticker_source_annotations:
+            if sticker_source_annotations and not creative_provider_active:
+                # The creative-director compiler already materialized every
+                # accepted caption/infographic choice.  Re-deriving stickers
+                # from semantic roles here would put the old regex planner
+                # back in charge and create effects MiniMax never proposed.
                 from src.services.editorial_stickers import (
                     build_editorial_sticker_events,
                     build_icon_label_events,
@@ -14939,7 +15025,17 @@ class VideoEditorWorkflowService:
                 task.outputs.get("vector_track_json")
                 or json.dumps(edit_plan.get("vector_track") or {})
             )
-            if local_grammar_v2 and not local_minimax_visuals and not sparse_asset_mode:
+            if creative_provider_active:
+                # A MiniMax creative plan already owns the accepted visual
+                # choices.  Do not resurrect cached/local vector cards at the
+                # renderer boundary; model-selected programmatic visuals are
+                # represented by compiler motion events instead.
+                vector_track = {"items": [], "asset_count": 0}
+            elif (
+                local_grammar_v2
+                and not local_minimax_visuals
+                and not sparse_asset_mode
+            ):
                 vector_track = {"items": [], "asset_count": 0}
             if isinstance(vector_track, Mapping):
                 existing_vector_items = [
@@ -14956,6 +15052,7 @@ class VideoEditorWorkflowService:
                     not has_semantic_layer
                     and shot_plan
                     and not brolls
+                    and not creative_provider_active
                     and os.getenv("VIDEO_EDITOR_ENABLE_SEMANTIC_INFO_BAND", "")
                     .lower()
                     in {"1", "true", "yes"}
@@ -15408,7 +15505,18 @@ class VideoEditorWorkflowService:
                 is_component = (
                     str(event.get("render_class") or "") == "motion_graphic"
                 )
-                return (1 if is_component else 0, float(event.get("start") or 0))
+                is_caption_only = (
+                    str(event.get("render_policy") or "").strip().lower()
+                    == "caption_only"
+                )
+                # Caption-only events are consumed by the subtitle renderer;
+                # they do not occupy the visual canvas.  Letting them win the
+                # overlap race used to discard a same-beat model-selected
+                # infographic before the renderer ever saw it.
+                return (
+                    1 if is_component or not is_caption_only else 0,
+                    float(event.get("start") or 0),
+                )
 
             _accepted: list[tuple[float, float]] = []
             _resolved: list[Mapping[str, Any]] = []
@@ -15419,9 +15527,20 @@ class VideoEditorWorkflowService:
                 except (TypeError, ValueError):
                     _resolved.append(_event)
                     continue
-                if any(_s < other_end and _e > other_start for other_start, other_end in _accepted):
+                is_caption_only = (
+                    str(_event.get("render_policy") or "").strip().lower()
+                    == "caption_only"
+                )
+                if (
+                    not is_caption_only
+                    and any(
+                        _s < other_end and _e > other_start
+                        for other_start, other_end in _accepted
+                    )
+                ):
                     continue
-                _accepted.append((_s, _e))
+                if not is_caption_only:
+                    _accepted.append((_s, _e))
                 _resolved.append(_event)
             motion_events = sorted(
                 _resolved, key=lambda item: float(item.get("start") or 0)
@@ -15609,7 +15728,9 @@ class VideoEditorWorkflowService:
                     planned_starts.append(value)
             planned_starts = sorted(set(round(value, 3) for value in planned_starts))
             for left_start, right_start in (
-                [] if grammar_only else list(zip(planned_starts, planned_starts[1:]))
+                []
+                if grammar_only or creative_provider_active
+                else list(zip(planned_starts, planned_starts[1:]))
             ):
                 gap_left = left_start
                 while right_start - gap_left > 7.5:
@@ -15658,7 +15779,8 @@ class VideoEditorWorkflowService:
                 duration_seconds=float(media["duration_seconds"]),
             )
             if (
-                str(shot_plan.get("template_id") or "") == "adaptive_talking_head_v1"
+                not creative_provider_active
+                and str(shot_plan.get("template_id") or "") == "adaptive_talking_head_v1"
                 and str(shot_plan.get("visual_density") or "") == "rich"
                 and effective_min_seconds > 0
             ):
@@ -18415,7 +18537,27 @@ class VideoEditorWorkflowService:
                             if sparse_asset_mode
                             else "JY_CLONE_GRAMMAR_ONLY"
                             if grammar_only
-                            else "SEMANTIC_ADAPTIVE_LOCAL"
+                            else (
+                                "SEMANTIC_ADAPTIVE_MINIMAX"
+                                if isinstance(director_plan, Mapping)
+                                and isinstance(
+                                    director_plan.get("semantic_director"),
+                                    Mapping,
+                                )
+                                and director_plan["semantic_director"].get(
+                                    "provider"
+                                )
+                                == "minimax"
+                                and isinstance(
+                                    director_plan.get("creative_director"),
+                                    Mapping,
+                                )
+                                and director_plan["creative_director"].get(
+                                    "source"
+                                )
+                                == "minimax_creative_director"
+                                else "SEMANTIC_ADAPTIVE_LOCAL"
+                            )
                         ),
                         "preset_id": str(
                             edit_plan.get("style_preset_id")

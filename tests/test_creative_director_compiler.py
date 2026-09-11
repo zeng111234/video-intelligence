@@ -69,6 +69,29 @@ def test_compiler_keeps_missing_asset_as_a_request_and_does_not_invent_broll():
     assert result["motion_events"] == []
 
 
+def test_compiler_carries_director_selected_sfx_id_through_every_event():
+    result = compile_creative_proposals(
+        [_proposal(
+            sfx_asset_id="sound-1",
+            event_type="product_visual",
+            layout="full_screen_broll",
+            visual_type="user_asset",
+            asset_id="asset-1",
+        )],
+        [{"start": 0.0, "end": 3.0, "text": "充值100送10元"}],
+        duration_seconds=3.0,
+        available_assets=[{"asset_id": "asset-1", "publish_allowed": True}],
+    )
+
+    assert result["rejected_proposals"] == []
+    assert result["proposals"][0]["sfx_asset_id"] == "sound-1"
+    assert result["asset_events"][0]["type"] == "broll_fullscreen"
+    assert all(
+        event["sfx_asset_id"] == "sound-1"
+        for event in result["events"]
+    )
+
+
 def test_compiler_bounds_strong_events_and_sfx_spacing():
     proposals = [
         _proposal(

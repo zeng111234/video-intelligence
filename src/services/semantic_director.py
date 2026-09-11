@@ -93,7 +93,12 @@ CREATIVE_VISUAL_TYPES = frozenset(
     {"none", "subject_motion", "licensed_broll", "user_asset", "generated_illustration", "programmatic_infographic", "vector_accent"}
 )
 _NEGATION_PATTERN = re.compile(r"不是|并非|没有|未曾|未|不|无|取消|取消了|不能|不可|别|禁止")
-_NUMBER_TOKEN_PATTERN = re.compile(r"\d+(?:\.\d+)?\s*(?:[%％万元亿元块元个张公里分钟天倍]?)")
+_NUMBER_TOKEN_PATTERN = re.compile(
+    r"\d+(?:\.\d+)?\s*(?:[%％]|(?:万|亿)?(?:元|块|个|张|公里|分钟|天|倍))?"
+)
+_ORDINAL_TOKEN_PATTERN = re.compile(
+    r"第[一二两三四五六七八九十百千万亿0-9]+(?:步|点|条|项|个|名|种|阶段)"
+)
 
 
 def build_director_cache_key(**parts: object) -> str:
@@ -273,6 +278,9 @@ def _proposal_rejection_reason(
         token = re.sub(r"\s+", "", number)
         if token and token not in grounded_text:
             return "amount_or_unit_not_preserved"
+    for ordinal in _ORDINAL_TOKEN_PATTERN.findall(source):
+        if ordinal not in grounded_text:
+            return "ordinal_or_sequence_not_preserved"
     enum_fields = (
         ("event_type", CREATIVE_EVENT_TYPES),
         ("layout", CREATIVE_LAYOUTS),
@@ -365,6 +373,11 @@ def validate_creative_proposals(
                 "asset_id": str(raw_item.get("asset_id") or "").strip() or None,
                 "asset_query": str(raw_item.get("asset_query") or "").strip()[:160] or None,
                 "sfx": str(raw_item.get("sfx")),
+                # Keep the provider's explicit choice all the way to the
+                # renderer.  The renderer still verifies the id against the
+                # reviewed local sound library, so this is provenance rather
+                # than an authority bypass.
+                "sfx_asset_id": str(raw_item.get("sfx_asset_id") or "").strip()[:120] or None,
                 "preferred_duration_seconds": round(float(raw_item.get("preferred_duration_seconds", 0.8)), 3),
                 "reason": str(raw_item.get("reason") or "").strip()[:240],
                 "status": "accepted",
@@ -758,7 +771,14 @@ def annotate_with_semantic_director(
                 if isinstance(raw_result, Mapping)
                 else None
             )
-            if checked:
+            # A creative-director response is still useful when the model
+            # returns no annotation rows but does return valid, transcript-
+            # grounded creative proposals.  The old ``if checked`` gate
+            # silently downgraded that response to local rules, which made
+            # MiniMax look like a label-only service at the actual export
+            # boundary.  Keep local annotations only as a completion fallback;
+            # the accepted proposals remain the creative source of truth.
+            if checked or creative_proposals:
                 local = fallback() if fallback else []
                 merged = merge_semantic_annotations(segments, checked, local)
                 segment_count = sum(
@@ -823,6 +843,8 @@ def annotate_with_semantic_director(
                     "creative_proposal_rejections": proposal_rejections,
                     "proposal_count": len(creative_proposals),
                     "rejected_count": len(proposal_rejections),
+                    "fallback_reason": None,
+                    "provider_output_accepted": True,
                     "keyframe_count": len(keyframes or []),
                     "keyframe_sources": [
                         {

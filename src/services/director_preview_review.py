@@ -132,17 +132,34 @@ def review_director_preview_once(
         }
     if not isinstance(raw, Mapping):
         return {"status": "failed", "reason": "review_result_not_object", "verdict": "pass", "revisions": []}
-    revisions = [
-        dict(item)
-        for item in raw.get("revisions") or []
-        if isinstance(item, Mapping)
-        and str(item.get("action") or "") in ALLOWED_REVIEW_ACTIONS
-    ][:12]
+    revisions: list[dict[str, Any]] = []
+    review_rejections: list[dict[str, Any]] = []
+    for item in raw.get("revisions") or []:
+        if not isinstance(item, Mapping):
+            review_rejections.append(
+                {"event_id": "", "action": "", "reason": "revision_not_object"}
+            )
+            continue
+        revision = dict(item)
+        action = str(item.get("action") or "")
+        if action not in ALLOWED_REVIEW_ACTIONS:
+            review_rejections.append(
+                {
+                    "event_id": str(item.get("event_id") or ""),
+                    "action": action,
+                    "reason": "action_not_allowed",
+                }
+            )
+            continue
+        revisions.append(revision)
+        if len(revisions) >= 12:
+            break
     return {
         "status": "completed",
         "verdict": "revise" if str(raw.get("verdict") or "pass") == "revise" else "pass",
         "issues": [dict(item) for item in raw.get("issues") or [] if isinstance(item, Mapping)][:12],
         "revisions": revisions,
+        "review_rejections": review_rejections,
         "call_count": 1,
     }
 
@@ -157,7 +174,11 @@ def apply_review_revisions(
 
     updated = json.loads(json.dumps(timeline, ensure_ascii=False))
     allowed_assets = {str(value) for value in available_asset_ids or []}
-    rejected: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = [
+        dict(item)
+        for item in review.get("review_rejections") or []
+        if isinstance(item, Mapping)
+    ]
     event_collections = [
         updated.get("motion_events") or [],
         updated.get("camera_events") or [],
