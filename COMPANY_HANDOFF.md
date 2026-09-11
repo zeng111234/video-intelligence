@@ -757,9 +757,8 @@ ssh videoinsight-server "du -xhd1 /opt/videoinsight-control-plane 2>/dev/null | 
 |---|---|
 | `交付文件/exports/VideoInsight-source-handoff-company-env-2026-09-11.zip` | 见同目录 `.sha256.txt` 记录 |
 | `交付文件/exports/VideoInsight-company-configured-handoff-2026-09-11.zip` | 已撤销，不得交付 |
-| `交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe` | `376930092cb5c6c5b71e963b6ec55acd4ab35cbe123aeab8a58af74f9cc84d60` |
 
-上表第二行的旧“配置版” ZIP 已作废，不得交付。源码包的哈希记录放在包外同目录，避免把哈希文本重新写入压缩包后改变压缩包自身哈希。
+上表第二行的旧“配置版” ZIP 已作废，不得交付。源码包的哈希记录放在包外同目录，避免把哈希文本重新写入压缩包后改变压缩包自身哈希。曾生成的 `0.2.49-company-handoff` 候选安装包仅作本机历史构建证据，不属于本次公司交付物；当前部署正在更新时，应以公司最终确认的部署版本重新构建和验收正式安装包。
 
 Windows PowerShell 计算方式：
 
@@ -920,9 +919,9 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 - [ ] 若使用公司控制层，HTTPS 地址、公司账号和公司供应商配置已单独确认；
 - [ ] 记录验收结果、日志路径、最终 ZIP/EXE SHA256 和负责人。
 
-### 21.5 当前 Windows 安装包
+### 21.5 Windows 安装包状态
 
-本次已生成可直接交给公司的 Windows x64 安装包：
+本次曾生成一个 Windows x64 候选安装包：
 
 - 文件：`交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe`；
 - SHA256：`376930092cb5c6c5b71e963b6ec55acd4ab35cbe123aeab8a58af74f9cc84d60`；
@@ -931,4 +930,4 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 - 交付包不含永久供应商密钥、密码、Token、个人 `.env` 或 SSH 私钥；
 - 安装包绑定公司控制层并使用其云端能力，密钥仍由公司密钥管理系统保管；它不依赖本机 Sandbox 才能完成正式云流程。
 
-双击安装包可以验证“客户端能否启动”；登录、激活码、云端供应商调用和正式剪辑链路仍必须在公司提供的账号、网络和权限下做一次业务验收，不能用本机健康检查替代。
+该文件名是为避免覆盖旧的 `0.2.48-dev.*` 测试构建而使用的临时候选标识，不代表 `0.2.49` 已正式发布。由于公司部署仍在更新，本次源码交接不包含这个候选 EXE。公司完成部署版本确认后，应从本交付源码重新生成与部署版本一致的正式安装包。双击安装包只能验证“客户端能否启动”；登录、激活码、云端供应商调用和正式剪辑链路仍必须在公司提供的账号、网络和权限下做一次业务验收，不能用本机健康检查替代。

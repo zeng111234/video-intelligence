@@ -234,7 +234,7 @@ Python 测试和静态检查：
 九、Windows EXE 打包环境
 ------------------------
 
-本次已提供一个可直接安装的 Windows x64 客户端：
+本次曾生成一个 Windows x64 候选客户端，但它不属于当前源码交付物：
 - 文件：交付文件/exports/VideoInsight-Windows-installer-0.2.49-company-handoff.exe。
 - SHA256：376930092cb5c6c5b71e963b6ec55acd4ab35cbe123aeab8a58af74f9cc84d60。
 - 该安装包已包含 Electron、Python 后端运行时、FFmpeg 和 FFprobe；接收方运行已生成的安装包时，不需要另外安装 Python、Node.js 或 FFmpeg。
@@ -242,6 +242,7 @@ Python 测试和静态检查：
 - 正式安装包启用公司控制层时不是供应商 Sandbox：转写、云剪辑和文案分别使用 cloud、aliyun、production；Electron 的 sandbox 仅表示渲染进程安全隔离。
 - 本机已验证解包版启动后 /health 返回 200 且 control_plane_enabled=true；正式登录、激活码、供应商调用和剪辑业务仍须在公司电脑上验收。
 - 当前外部依赖状态（2026-09-11）：对 https://xmt.syszr.cn/health 的两次检查均返回 502；只读 SSH 检查显示 videoinsight-control-plane.service 为 inactive/dead。恢复服务器服务和 HTTPS 反向代理后，才能验收云端业务；不要把客户端改回 Sandbox 当作替代方案。
+- `0.2.49-company-handoff` 只是为避免覆盖旧 `0.2.48-dev.*` 文件而使用的临时候选标识，不代表正式发布；公司部署仍在更新，本次只交付源码 ZIP 和文档。部署版本确定后，再从交付源码构建同版本正式安装包。
 
 重新打包除了源码开发依赖，还需要：
 1. Python 3.12+ 和根目录 .venv。
@@ -356,7 +357,7 @@ Windows EXE 打包：
 - 前端 23 个测试文件、204 个测试通过；
 - npx tsc --noEmit 通过；
 - npm run build 通过；
-- Windows x64 EXE 已生成，直接启动解包版后 /health 返回 200、control_plane_enabled=true，且已绑定 https://xmt.syszr.cn。
+- Windows x64 候选 EXE 已生成并完成本机解包启动检查，但不纳入本次公司交付；后续正式 EXE 必须与公司最终部署版本一致。
 
 开发测试补装 requirements-dev.txt 后，当前交付分支全量 Python 测试通过：
 - 依赖 work/ 阶段性证据目录的历史测试，在证据不存在时按明确原因跳过；
