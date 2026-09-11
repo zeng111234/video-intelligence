@@ -75,6 +75,19 @@ COPYWRITING_INPUT_PRICE_KEY = "copywriting_input_cny_per_1k_tokens"
 COPYWRITING_OUTPUT_PRICE_KEY = "copywriting_output_cny_per_1k_tokens"
 MINIMUM_COPYWRITING_CHARGE = Decimal("0.01")
 
+# 模型一次都没有返回内容时的结果标记。
+#
+# 历史缺陷：这种情况会回落到 fallback_results（改写时就是用户原文本身），
+# 任务仍被标记为 succeeded / "改写完成"，接口返回 200，于是"生成内容与原文
+# 完全相同"看起来像一次成功改写。必须把"模型没产出"和"模型产出了但需要人工
+# 复核"区分开：前者是失败，不能冒充成功，也不能扣积分。
+COMPLIANCE_STATUS_MODEL_UNAVAILABLE = "model_unavailable"
+
+MODEL_UNAVAILABLE_MESSAGE = (
+    "AI 这次没有返回可用的新内容。为避免把原文当成改写结果，本次没有生成文案，也未扣积分。"
+    "请稍后重试；若反复失败，请联系管理员检查 AI 文案服务配置。"
+)
+
 
 @dataclass(frozen=True)
 class CopySourceOption:
@@ -423,7 +436,11 @@ class CopywritingService:
             notes.append(message)
             return (
                 results,
-                "best_effort",
+                # generated_version=False 意味着模型一次都没有产出内容，
+                # 这里的 results 只是回落的用户输入。它必须与"模型产出了、
+                # 但保留人工复核"的 best_effort 区分开，否则接口会把原文
+                # 当成改写结果返回 200。
+                "best_effort" if generated_version else COMPLIANCE_STATUS_MODEL_UNAVAILABLE,
                 notes,
                 generated_version and (risk_retry_used or dedup_retry_used),
                 retry_used,
@@ -509,6 +526,66 @@ class CopywritingService:
                 generated_version=False,
             )
         raise RuntimeError("自动处理未完成。")
+
+    def _fail_without_generation(
+        self,
+        task: CopywritingTask,
+        on_progress: Callable[[CopywritingTask], None] | None,
+        *,
+        stage: str,
+        accumulated_usage: dict[str, int],
+        notes: list[str],
+    ) -> CopywritingTask:
+        """把"模型没有产出"如实报告为失败，而不是回显输入冒充成功。
+
+        ``_run_with_compliance`` 回落到 ``fallback_results`` 时，``results``
+        就是用户自己输入的内容（改写时是原文）。此前它会带着
+        ``status=succeeded`` / ``stage=改写完成`` 返回，接口 200，调用方看到
+        "生成内容与原文完全相同"，既误导用户又可能产生费用。这里统一改为
+        失败结果：不保留伪造成品、不扣积分，并给出一句人话和重试入口。
+        """
+
+        failed = task.model_copy(
+            update={
+                "status": TaskStatus.FAILED,
+                "progress": 100,
+                "stage": stage,
+                "updated_at": datetime.now().astimezone(),
+                "token_usage": accumulated_usage or self._last_usage(),
+                "charged_credits": 0.0,
+                "result_text": None,
+                "result_variants": [],
+                "compliance_status": COMPLIANCE_STATUS_MODEL_UNAVAILABLE,
+                "compliance_notes": list(dict.fromkeys([*notes, MODEL_UNAVAILABLE_MESSAGE])),
+                "compliance_rewritten": False,
+                "compliance_retry_used": False,
+                "error_message": MODEL_UNAVAILABLE_MESSAGE,
+            }
+        )
+        self._save(failed, on_progress)
+        return failed
+
+    @staticmethod
+    def _is_unchanged_output(source_text: str, results: list[str]) -> bool:
+        """结果与输入在正文层面完全一致时，判定为"没有真正改写"。
+
+        这是针对远端引擎的兜底：公司控制层跑的是同一套代码，若它尚未升级，
+        仍可能把原文原样回传。按空白和标点归一化后逐字相同即视为未改写；
+        这里刻意不用 ``_too_similar`` 的模糊阈值，避免把正常的轻度改写误判为
+        失败——只有完全一致才拦截。
+        """
+
+        def normalize(value: str) -> str:
+            return re.sub(r"[\s\W_]+", "", value)
+
+        normalized_source = normalize(source_text)
+        if not normalized_source:
+            return False
+        return any(
+            normalize(result) == normalized_source
+            for result in results
+            if normalize(result)
+        )
 
     # ------------------------------------------------------------------
     # 三档文案来源
@@ -950,6 +1027,23 @@ class CopywritingService:
                 dedup_source=source_text,
                 fallback_results=[source_text],
             )
+            if compliance_status == COMPLIANCE_STATUS_MODEL_UNAVAILABLE:
+                return self._fail_without_generation(
+                    task,
+                    on_progress,
+                    stage="未生成新文案",
+                    accumulated_usage=accumulated_usage,
+                    notes=compliance_notes,
+                )
+            # 远端引擎（公司控制层）可能把原文原样回传；这同样不是改写成功。
+            if self._is_unchanged_output(source_text, results):
+                return self._fail_without_generation(
+                    task,
+                    on_progress,
+                    stage="改写结果与原文一致",
+                    accumulated_usage=accumulated_usage,
+                    notes=compliance_notes,
+                )
             longest_result = max(
                 (self._spoken_character_count(result) for result in results),
                 default=0,
@@ -1170,6 +1264,14 @@ class CopywritingService:
                 run=run,
                 fallback_results=[fallback_text],
             )
+            if compliance_status == COMPLIANCE_STATUS_MODEL_UNAVAILABLE:
+                return self._fail_without_generation(
+                    task,
+                    on_progress,
+                    stage="未生成文案",
+                    accumulated_usage=accumulated_usage,
+                    notes=compliance_notes,
+                )
             longest_result = max(
                 (self._spoken_character_count(result) for result in results),
                 default=0,
