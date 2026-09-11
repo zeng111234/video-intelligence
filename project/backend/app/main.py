@@ -165,13 +165,14 @@ async def lifespan(application: FastAPI):
         logger.info("流水线 worker 已启动")
     except Exception as exc:
         logger.warning("流水线 worker 启动失败（不影响 API）: %s", exc)
-    # 恢复被中断的抓取队列，并回收崩溃进程留下的采集租约。
+    # 恢复被中断的抓取队列，并回收崩溃进程留下的采集租约与孤儿浏览器。
     #
     # 后端崩溃/被强杀时 worker 线程随进程消失，队列却停在 running，页面永远
     # 显示"正在采集"。这一步必须在 worker 启动之后、yield 之前完成，恢复起来的
     # 队列才能立刻被 worker 接手。
     try:
         from project.backend.app.api.v1.crawler import (
+            reclaim_orphan_browsers,
             recover_interrupted_crawler_queues,
         )
         from project.backend.app.core.repository import get_repository
@@ -188,11 +189,21 @@ async def lifespan(application: FastAPI):
                 "抓取队列自动恢复次数已用尽，已标记失败：%s",
                 "、".join(recovery["exhausted"]),
             )
+        for note in reclaim_orphan_browsers():
+            logger.info("孤儿浏览器回收：%s", note)
     except Exception as exc:
-        logger.warning("抓取队列恢复失败（不影响启动）: %s", exc)
+        logger.warning("抓取队列与浏览器恢复失败（不影响启动）: %s", exc)
     try:
         yield
     finally:
+        # 只关闭由本后端启动的浏览器；用户自己的 Chrome/Edge 一律不碰。
+        try:
+            from project.backend.app.api.v1.crawler import close_owned_browsers
+
+            for note in close_owned_browsers():
+                logger.info("浏览器释放：%s", note)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("关闭本机浏览器失败：%s", exc)
         if worker is not None:
             await worker.stop()
         if publish_worker is not None:

@@ -27,6 +27,11 @@ from urllib.request import ProxyHandler, build_opener
 
 from pydantic import HttpUrl
 
+from src.adapters.browser_process import (
+    close_owned_browser,
+    record_browser_process,
+    reclaim_orphan_browser,
+)
 from src.adapters.browser_window import (
     minimize_browser_window,
     reveal_browser_window,
@@ -185,6 +190,9 @@ class LocalPlatformBrowserSearchProvider:
         # Only expose login reset after the page soft-recovery path fails;
         # an initial login prompt is not a reason to clear state.
         self.login_reset_available = False
+        # 由本实例启动的浏览器进程（用于只回收"自己的"浏览器）。
+        self._browser_process: subprocess.Popen[bytes] | None = None
+        self._browser_pid: int | None = None
 
     def capabilities(self) -> ProviderCapability:
         missing = self._missing_prerequisites()
@@ -230,6 +238,32 @@ class LocalPlatformBrowserSearchProvider:
             ),
             missing_configuration=missing,
         )
+
+    def reclaim_orphan_browser(self) -> tuple[bool, str]:
+        """启动前回收上一次后端留下的孤儿浏览器。
+
+        只有记录的 PID 与 --user-data-dir 同时匹配才回收；不会按进程名批量
+        结束 Chrome，因此不会影响用户自己开着的浏览器。
+        """
+        return reclaim_orphan_browser(self.profile_dir)
+
+    def close_owned_browser(self) -> tuple[bool, str]:
+        """后端退出时只关闭本实例启动的浏览器，并等待 profile 锁释放。
+
+        超时会返回明确说明，不静默失败：否则下次启动会撞上一个锁住的 profile，
+        而用户完全不知道发生过什么。
+        """
+        pid = self._browser_pid
+        if not pid:
+            record = read_browser_process_record(self.profile_dir)
+            pid = int(record["pid"]) if record and record.get("pid") else None
+        if not pid:
+            return True, "本次没有由本进程启动的浏览器。"
+        closed, message = close_owned_browser(pid, self.profile_dir)
+        if closed:
+            self._browser_process = None
+            self._browser_pid = None
+        return closed, message
 
     def session_status(self) -> BrowserSessionStatus:
         missing = self._missing_prerequisites()
@@ -524,11 +558,18 @@ class LocalPlatformBrowserSearchProvider:
                 ]
             )
         browser_args.append(self.spec.home_url)
-        subprocess.Popen(  # noqa: S603 - executable is resolved from an allowlist
+        # 必须保留 Popen 句柄：Popen 的返回值此前被直接丢弃，导致浏览器 PID
+        # 从未记录，后端崩溃后只能靠"按进程名批量结束 Chrome"补救——那会连用户
+        # 自己的浏览器一起杀掉。这里记下 PID 与 --user-data-dir 的对应关系。
+        self._browser_process = subprocess.Popen(  # noqa: S603 - executable is resolved from an allowlist
             browser_args,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        self._browser_pid = self._browser_process.pid
+        record_browser_process(
+            self.profile_dir, self._browser_pid, platform=self.platform.value
         )
         if not visible:
             # Chromium can restore its window while opening the initial tab,

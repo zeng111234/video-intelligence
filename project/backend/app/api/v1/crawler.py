@@ -4513,6 +4513,80 @@ CRAWLER_RECOVERY_EXHAUSTED_MESSAGE = (
 )
 
 
+def browser_profile_directories() -> list[tuple[str, Path]]:
+    """全部本机浏览器 profile 目录：(平台名, 目录)。
+
+    进程回收按 profile 目录工作，而不是按 provider 实例：provider 是每次请求
+    新建的，实例上的 PID 拿不到；而记录文件就写在 profile 目录里，重启后依然
+    可读。
+    """
+    from project.backend.app.core.config import (
+        BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR,
+        DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR,
+        KUAISHOU_BROWSER_DISCOVERY_PROFILE_DIR,
+        XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR,
+    )
+
+    return [
+        ("douyin", Path(DOUYIN_BROWSER_DISCOVERY_PROFILE_DIR)),
+        ("xiaohongshu", Path(XIAOHONGSHU_LOGIN_BROWSER_PROFILE_DIR)),
+        ("kuaishou", Path(KUAISHOU_BROWSER_DISCOVERY_PROFILE_DIR)),
+        ("bilibili", Path(BILIBILI_BROWSER_DISCOVERY_PROFILE_DIR)),
+    ]
+
+
+def reclaim_orphan_browsers() -> list[str]:
+    """启动时回收上一次后端留下的孤儿浏览器。
+
+    只回收 PID 与 --user-data-dir 同时匹配的进程，绝不按进程名批量结束
+    Chrome —— 那会连带杀掉用户自己开着的浏览器。
+    """
+    from src.adapters.browser_process import reclaim_orphan_browser
+
+    messages: list[str] = []
+    for name, profile_dir in browser_profile_directories():
+        try:
+            reclaimed, message = reclaim_orphan_browser(profile_dir)
+        except Exception as exc:  # noqa: BLE001 - 回收失败不能拖垮启动
+            messages.append(f"{name}：回收浏览器失败（{exc}）。")
+            continue
+        if not reclaimed:
+            messages.append(f"{name}：{message}")
+            logger.warning("回收 %s 孤儿浏览器未完成：%s", name, message)
+    return messages
+
+
+def close_owned_browsers() -> list[str]:
+    """后端退出时只关闭本次启动的浏览器，并等待 profile 锁释放。
+
+    超时会记入日志并返回明确说明，不静默失败。
+    """
+    from src.adapters.browser_process import (
+        close_owned_browser,
+        read_browser_process_record,
+    )
+
+    messages: list[str] = []
+    for name, profile_dir in browser_profile_directories():
+        record = read_browser_process_record(profile_dir)
+        if not record or not record.get("pid"):
+            continue
+        try:
+            pid = int(record["pid"])
+        except (TypeError, ValueError):
+            continue
+        try:
+            closed, message = close_owned_browser(pid, profile_dir)
+        except Exception as exc:  # noqa: BLE001
+            messages.append(f"{name}：关闭浏览器失败（{exc}）。")
+            logger.warning("关闭 %s 浏览器失败：%s", name, exc)
+            continue
+        if not closed:
+            logger.warning("关闭 %s 浏览器未完成：%s", name, message)
+        messages.append(f"{name}：{message}")
+    return messages
+
+
 def recover_interrupted_crawler_queues(repo) -> dict[str, Any]:
     """启动时恢复被中断的抓取队列，并回收失效的采集租约。
 
