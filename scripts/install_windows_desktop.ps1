@@ -346,6 +346,105 @@ function Stop-VideoInsightProcesses {
     }
 }
 
+function Get-RecordedDesktopPort {
+    param([Parameter(Mandatory = $true)][string]$RuntimeRootPath)
+
+    # 旧版把当前端口写在 desktop-runtime.json 里。旧版没有这个文件时返回 0，
+    # 由调用方回退到扫描已知端口。
+    $statePath = Join-Path $RuntimeRootPath "data\desktop-runtime.json"
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        return 0
+    }
+    try {
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        $port = [int]$state.port
+        if ($port -ge 1024 -and $port -le 65535) {
+            return $port
+        }
+    }
+    catch {
+    }
+    return 0
+}
+
+function Wait-LocalPortReleased {
+    param(
+        [Parameter(Mandatory = $true)][string]$RuntimeRootPath,
+        [int[]]$CandidatePorts = @(),
+        [int]$TimeoutSeconds = 30
+    )
+
+    # 只等进程退出是不够的：Windows 上端口可能还被占用一小段时间，此时新版本
+    # 会挑到另一个端口，验收脚本却按旧端口去探活，于是误报"登录页 404"——
+    # 0.2.51 的三次升级失败正是这种形态。这里必须确认端口真的释放了。
+    $ports = @()
+    $recorded = Get-RecordedDesktopPort -RuntimeRootPath $RuntimeRootPath
+    if ($recorded -gt 0) {
+        $ports += $recorded
+    }
+    $ports += $CandidatePorts
+    $ports = @($ports | Where-Object { $_ -ge 1024 -and $_ -le 65535 } | Select-Object -Unique)
+    if ($ports.Count -eq 0) {
+        return
+    }
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $listening = @()
+        foreach ($port in $ports) {
+            $listening += @(
+                Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+            )
+        }
+        if ($listening.Count -eq 0) {
+            return
+        }
+        Start-Sleep -Milliseconds 400
+    }
+
+    $stillListening = @()
+    foreach ($port in $ports) {
+        $stillListening += @(
+            Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+        )
+    }
+    $ownerIds = @($stillListening | Select-Object -ExpandProperty OwningProcess -Unique)
+    throw (
+        "等待旧版本释放本机端口超时（{0} 秒）：端口 {1} 仍被占用（PID: {2}）。" -f `
+            $TimeoutSeconds,
+            (@($ports) -join "、"),
+            (($ownerIds | ForEach-Object { [string]$_ }) -join "、")
+    )
+}
+
+function Remove-StaleDesktopRuntimeState {
+    param([Parameter(Mandatory = $true)][string]$RuntimeRootPath)
+
+    # 旧版本被强杀时会留下 desktop-runtime.json。新版本启动前必须清掉它，
+    # 否则验收脚本会读到一条指向已死进程的旧记录，进而用错误的端口探活。
+    $statePath = Join-Path $RuntimeRootPath "data\desktop-runtime.json"
+    if (-not (Test-Path -LiteralPath $statePath -PathType Leaf)) {
+        return
+    }
+    try {
+        $state = Get-Content -LiteralPath $statePath -Raw | ConvertFrom-Json
+        # 注意：不要用 $pid 作变量名，它是 PowerShell 自动变量（当前进程 ID）。
+        $recordedProcessId = [int]$state.pid
+        if ($recordedProcessId -gt 0) {
+            $alive = Get-Process -Id $recordedProcessId -ErrorAction SilentlyContinue
+            if ($alive) {
+                # 进程还在：不清记录，交给进程关闭流程处理。
+                return
+            }
+        }
+        Remove-Item -LiteralPath $statePath -Force
+    }
+    catch {
+        # 内容已损坏，同样按失效记录删除，避免下次启动误读。
+        Remove-Item -LiteralPath $statePath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Restore-UninstallRegistration {
     param(
         [string]$RegistryPath,
@@ -512,6 +611,34 @@ function Copy-DirectoryTreeForMigration {
 }
 
 try {
+    # 全局互斥：用户重复双击安装包时只能有一个安装流程在跑。
+    #
+    # 否则两个安装器会同时移动同一个安装目录、同时写卸载登记、同时启动新版本，
+    # 结果就是"半更新"状态和多个后端进程。
+    $installerMutex = New-Object System.Threading.Mutex(
+        $false,
+        "Global\VideoInsightInstaller"
+    )
+    $mutexAcquired = $false
+    try {
+        $mutexAcquired = $installerMutex.WaitOne(0)
+    }
+    catch [System.Threading.AbandonedMutexException] {
+        # 上一个安装器异常退出留下了这个互斥体，视为已获取。
+        $mutexAcquired = $true
+    }
+    if (-not $mutexAcquired) {
+        $busyMessage = "已经有一个 VideoInsight 安装程序正在运行，请等它结束后再试。"
+        if ($Quiet) {
+            Write-Error $busyMessage
+        }
+        else {
+            Add-Type -AssemblyName PresentationFramework
+            [System.Windows.MessageBox]::Show($busyMessage, "VideoInsight 安装") | Out-Null
+        }
+        exit 1
+    }
+
     $payload = Join-Path $PSScriptRoot "payload.zip"
     if (-not (Test-Path -LiteralPath $payload)) {
         throw "安装包内容不完整：缺少 payload.zip"
@@ -616,6 +743,17 @@ try {
 
     $phase = "关闭旧版后台进程"
     Stop-VideoInsightProcesses -ExpectedInstallRoot $existingInstallRoot
+    # 只等进程退出不够：端口可能还被占用，新版本会挑到别的端口，而验收脚本
+    # 仍按旧端口探活，于是误报"登录页 404"。必须确认端口真的释放。
+    Wait-LocalPortReleased `
+        -RuntimeRootPath $RuntimeRoot `
+        -CandidatePorts @(
+            (Get-RecordedDesktopPort -RuntimeRootPath $RuntimeRoot),
+            1001,
+            2001
+        )
+    # 清掉旧进程留下的失效运行时记录，避免新版本启动后验收读到已死进程的端口。
+    Remove-StaleDesktopRuntimeState -RuntimeRootPath $RuntimeRoot
 
     if ($hasExistingInstall) {
         $phase = "保留旧版本"
@@ -777,7 +915,8 @@ try {
         -ExecutionPolicy Bypass `
         -File $installedVerifier `
         -ExpectedVersion $Version `
-        -ReportPath $verificationReport
+        -ReportPath $verificationReport `
+        -InstalledAfterUtc $desktopStartedAtUtc.ToString("o")
     if ($LASTEXITCODE -ne 0) {
         throw "自动验收未全部通过，已停止启用新版本。"
     }
@@ -902,4 +1041,15 @@ catch {
         ) | Out-Null
     }
     exit 1
+}
+finally {
+    # 无论成功失败都要释放安装互斥体，否则用户再也装不上。
+    if ($mutexAcquired -and $installerMutex) {
+        try {
+            $installerMutex.ReleaseMutex()
+        }
+        catch {
+        }
+        $installerMutex.Dispose()
+    }
 }

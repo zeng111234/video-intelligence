@@ -2,7 +2,10 @@
     [ValidatePattern('^$|^[0-9]+\.[0-9]+\.[0-9]+$')]
     [string]$ExpectedVersion = "",
     [string]$ReportPath = "",
-    [switch]$RequireNoDeveloperTools
+    [switch]$RequireNoDeveloperTools,
+    # 本次安装开始的时间（ISO8601）。用于确认 desktop-runtime.json 是这次安装
+    # 产生的，而不是旧版本留下的——旧记录会让验收脚本用错误的端口探活。
+    [string]$InstalledAfterUtc = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -243,6 +246,67 @@ if (Test-SafeLeaf -LiteralPath $runtimeState) {
     catch { }
 }
 $script:ServiceOrigin = "http://127.0.0.1:$script:ServicePort"
+
+# 运行时记录必须确实是"这次安装"产生的（0.2.52）。
+#
+# 0.2.51 的升级失败里，安装器会读到旧版本留下的 desktop-runtime.json，于是按
+# 一个已经死掉的进程和错误的端口去探活，表现为"登录页 404"、"后端未就绪"。
+# 因此除了端口和 PID 可用，还要确认：
+#   * started_at 晚于本次安装开始时间；
+#   * PID 指向的进程确实存在；
+#   * 该进程的可执行文件位于本次安装目录内。
+$runtimeRecordFresh = $false
+$runtimeRecordEvidence = "no record"
+if (Test-SafeLeaf -LiteralPath $runtimeState) {
+    try {
+        $record = Get-Content -LiteralPath $runtimeState -Raw | ConvertFrom-Json
+        $recordPid = [int]$record.pid
+        $recordProcess = Get-Process -Id $recordPid -ErrorAction SilentlyContinue
+        $recordProcessPath = ""
+        if ($recordProcess) {
+            try { $recordProcessPath = [string]$recordProcess.Path } catch { $recordProcessPath = "" }
+        }
+        $processInsideInstallRoot = Test-PathInsideRoot `
+            -Candidate $recordProcessPath `
+            -Root $installRoot
+        $startedAfter = $true
+        $startedAtValue = ""
+        if (-not [string]::IsNullOrWhiteSpace($InstalledAfterUtc)) {
+            $startedAtValue = [string]$record.started_at
+            if ([string]::IsNullOrWhiteSpace($startedAtValue)) {
+                # 旧记录没有 started_at：无法证明是本次产生，按不合格处理。
+                $startedAfter = $false
+            }
+            else {
+                try {
+                    $startedAfter = (
+                        [DateTime]::Parse($startedAtValue).ToUniversalTime() -ge
+                        [DateTime]::Parse($InstalledAfterUtc).ToUniversalTime()
+                    )
+                }
+                catch {
+                    $startedAfter = $false
+                }
+            }
+        }
+        $runtimeRecordFresh = [bool](
+            $recordProcess -and $processInsideInstallRoot -and $startedAfter
+        )
+        $runtimeRecordEvidence = (
+            "pid={0}; process={1}; inside_install_root={2}; started_at={3}; after_install={4}" -f `
+                $recordPid, $recordProcessPath, $processInsideInstallRoot,
+                $startedAtValue, $startedAfter
+        )
+    }
+    catch {
+        $runtimeRecordFresh = $false
+        $runtimeRecordEvidence = "record unreadable: $($_.Exception.Message)"
+    }
+}
+Add-Check `
+    -Name "Runtime record belongs to this install" `
+    -Passed $runtimeRecordFresh `
+    -Evidence $runtimeRecordEvidence
 
 $python = Get-Command python.exe -ErrorAction SilentlyContinue
 $node = Get-Command node.exe -ErrorAction SilentlyContinue
