@@ -22,6 +22,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 import jieba
+import jieba.posseg
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
@@ -97,7 +98,7 @@ CAPTION_FONT_FAMILY = "Smiley Sans"
 _CAPTION_BREAK_CHARACTERS = frozenset("，。！？；：、,.!?;:“”‘’（）()【】[]《》…—")
 _NUMERIC_PUNCTUATION = frozenset(".,:")
 _CAPTION_NUMERIC_ATOM_RE = re.compile(
-    r"\d+(?:[.,]\d+)*(?:[%％元块万亿千百十公里米厘米分钟秒个家人套条次岁年月天斤倍折号点]+)?"
+    r"(?:(?:[A-Za-z]{1,8})?\d+(?:[-/]\d+)+|\d+(?:[.,]\d+)*(?:[%％元块万亿千百十公里米厘米分钟秒个家人套条次岁年月天斤倍折号点]+)?)"
 )
 _CAPTION_BREAK_BEFORE_TOKENS = (
     "不只是",
@@ -1111,6 +1112,19 @@ def _caption_phrase_parts(
             for split_at in range(minimum_split, maximum_split + 1)
             if not _caption_split_is_inside_numeric(remaining, split_at)
         ]
+        # A long standard identifier (for example ``GB18483-2001``) may be
+        # wider than the normal caption line.  Keep the complete atom even
+        # when that means temporarily exceeding ``max_chars``; splitting it
+        # at ``GB18``/``483-2001`` is both unreadable and a false lexical
+        # boundary.  The renderer can scale/wrap this explicit exception.
+        oversized_numeric_ends = [
+            end
+            for start, end in _caption_numeric_ranges(remaining)
+            if start < minimum_split
+            and end > maximum_split
+            and end > minimum_split
+        ]
+        safe_fallbacks.extend(oversized_numeric_ends)
         split_at = min(
             candidates or safe_fallbacks or [max(minimum_split, min(maximum_split, ideal))],
             key=lambda value: (abs(value - ideal), -value),
@@ -2523,6 +2537,51 @@ _CAPTION_WORD_MOTION_KINDS = {
 }
 
 
+def _grounded_caption_term(lines: Sequence[str]) -> tuple[str, str] | None:
+    """Pick the phrase a caption line should carry the accent on.
+
+    The reference rough-cut grammar accents nearly every spoken line, but the
+    accent must stay grounded in the reviewed sentence and must never invent
+    content.  This ranks the line's own lexical units the same way the local
+    style engine does and returns the strongest one; a sentence with no usable
+    unit returns ``None`` so the caption simply stays clean.
+
+    This replaces a trailing-``2..4``-character regex, which missed most lines
+    (a 17-line clip ended up with two accents).
+    """
+
+    from src.services.grammar_only import _KEYWORD_STOPWORDS
+
+    text = _clean_caption_text("".join(str(line) for line in lines))
+    if len(text) < 2:
+        return None
+    best: tuple[float, str] | None = None
+    for token in jieba.posseg.lcut(text, HMM=True):
+        word = re.sub(r"[^\w\u4e00-\u9fff%．.]+", "", str(token.word or ""))
+        flag = str(token.flag or "")
+        if (
+            not (2 <= len(word) <= 4)
+            or word in _KEYWORD_STOPWORDS
+            or word.isdigit()
+            or flag[:1] not in {"n", "v", "a"}
+        ):
+            continue
+        # A noun object is the strongest anchor; longer units carry more
+        # meaning than a two-character fragment.
+        score = {"n": 4.0, "v": 3.0, "a": 2.5}.get(flag[:1], 1.0)
+        score += min(1.5, max(0, len(word) - 2) * 0.5)
+        if best is None or score > best[0]:
+            best = (score, word)
+    if best is None:
+        return None
+    kind = (
+        "number" if re.search(r"\d", best[1])
+        else "warning" if best[1] in {"不要", "风险", "注意"}
+        else "keyword"
+    )
+    return best[1], kind
+
+
 def _apply_adaptive_caption_effects(
     cues: list[dict[str, Any]],
     *,
@@ -2554,13 +2613,19 @@ def _apply_adaptive_caption_effects(
             continue
         cue["emphasis_range"] = None
         cue["emphasis_style"] = None
-        if index != 0 and index % 3 != 1:
-            continue
+        # Every cue is a candidate.  Density is governed by the grounding
+        # rules and by the temporal budget below, not by a fixed stride:
+        # skipping two out of three cues is what left a talking head with
+        # only one or two accented words for the whole clip.
         text = _caption_display_cleanup("".join(str(line) for line in cue.get("lines") or []))
         candidate = next((item for item in _ADAPTIVE_EMPHASIS_TERMS if item[0] in text), None)
         automatic = _automatic_emphasis_term(text)
         if candidate is None and automatic is not None:
             candidate = automatic
+        if candidate is None:
+            # Fall back to the line's own strongest lexical unit so the accent
+            # rhythm matches the reference instead of leaving most lines plain.
+            candidate = _grounded_caption_term(cue.get("lines") or [])
         if candidate is None:
             continue
         term, kind = candidate
@@ -2587,10 +2652,11 @@ def _apply_adaptive_caption_effects(
         (float(cue.get("end") or 0) for cue in cues),
         default=0.0,
     )
-    # Keep strong events inside the product contract: 3-5 per 60 seconds.
-    # Use the upper bound so a short clip still has enough editorial accents,
-    # while the spacing guard below prevents adjacent cues from piling up.
-    total_budget = max(1, math.ceil(max_end / 60 * 5))
+    # Douyin-style rhythm: roughly one accented phrase every few seconds so
+    # the captions carry the pace, while the spacing guard below still stops
+    # adjacent cues from piling up.  The previous 3-5 per minute budget left
+    # a whole short clip with a single accent.
+    total_budget = max(1, math.ceil(max_end / 60 * 18))
     # The candidate list is already grounded and one-per-segment.  Do not let
     # an arbitrary time bucket discard a later result or CTA beat; the
     # temporal spacing guard below remains the actual density limiter.
@@ -2965,12 +3031,31 @@ def _caption_kinetic_words_for_cue(
     return spans
 
 
+_EXPLICIT_CAPTION_TREATMENTS = {
+    "fade_in": "fade_in",
+    "scale_overshoot": "number_slam",
+    "slam_keyword": "slam",
+    "stamp_keyword": "stamp",
+    "shake_keyword": "shake",
+    "underline_keyword": "marker",
+    "two_level_conclusion": "stamp",
+}
+
+
 def _caption_kinetic_style_for_cue(
     cue: Mapping[str, Any],
     segment: Mapping[str, Any],
     cue_index: int,
 ) -> str:
     """Choose a small, semantic motion vocabulary instead of random effects."""
+
+    # An explicit treatment chosen by the director is an instruction, not a
+    # hint: honour it before deriving a style from the semantic kind, otherwise
+    # distinct choices (for example shake vs stamp) collapse into one effect.
+    explicit = str(segment.get("caption_treatment") or "").strip().lower()
+    mapped = _EXPLICIT_CAPTION_TREATMENTS.get(explicit)
+    if mapped:
+        return mapped
 
     text = _caption_display_cleanup(
         "".join(str(line) for line in cue.get("lines") or [])

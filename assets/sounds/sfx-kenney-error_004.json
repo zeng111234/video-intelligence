@@ -1,0 +1,20 @@
+{
+  "asset_id": "sfx-kenney-interface-error_004",
+  "kind": "sound_effect",
+  "name": "kenney-interface-error_004",
+  "stored_name": "sfx-kenney-error_004.wav",
+  "media_type": "audio/wav",
+  "source_provider": "Kenney",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_cc0_asset",
+  "rights_holder": "Kenney",
+  "authorization_status": "confirmed",
+  "rights_status": "cc0_public_domain",
+  "publish_licensed": true,
+  "license_name": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "source_url": "https://kenney.nl/assets/interface-sounds",
+  "sha256": "ba6cd007aa701041a2fde4a8088b67912fc1fd55f4f582288a1bd286874cd10b",
+  "duration_seconds": 0.1045,
+  "suggested_category": "error"
+}

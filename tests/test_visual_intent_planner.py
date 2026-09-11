@@ -37,3 +37,38 @@ def test_semantic_adaptive_preset_is_explicit_and_not_grammar_only():
     assert preset["visual_director"]["enabled"] is True
     assert preset["broll_policy"]["require_semantic_match"] is True
     assert preset["visual_director"]["allow_generated_image_gap_fill"] is True
+
+
+def test_standalone_numeric_annotation_does_not_request_external_asset():
+    request = build_semantic_visual_request(
+        text="最多便宜3.5万元",
+        segment_index=0,
+        annotations=[
+            {
+                "source_segment_index": 0,
+                "semantic_text": "最多便宜3.5万元",
+                "semantic_roles": ["NUMBER", "PRICE"],
+                "concrete_visual_subject": "",
+            }
+        ],
+    )
+
+    assert request is None
+
+
+def test_numeric_annotation_can_stay_metadata_on_a_concrete_subject_request():
+    request = build_semantic_visual_request(
+        text="这台车便宜3.5万元",
+        segment_index=0,
+        annotations=[
+            {
+                "source_segment_index": 0,
+                "semantic_text": "这台车便宜3.5万元",
+                "semantic_roles": ["PRODUCT", "NUMBER", "PRICE"],
+                "concrete_visual_subject": "这台车",
+            }
+        ],
+    )
+
+    assert request is not None
+    assert request["visual_type"] == "semantic_subject"

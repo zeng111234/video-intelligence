@@ -2634,6 +2634,42 @@ export default function VideoEditorPage() {
             {currentItem?.edit_plan?.director_plan && (
               <Card size="small" data-testid="director-plan-summary">
                 <Space direction="vertical" size={5} style={{ width: "100%" }}>
+                  {(() => {
+                    const semanticDirector = currentItem.edit_plan.director_plan?.semantic_director;
+                    const creativeDirector = currentItem.edit_plan.director_plan?.creative_director;
+                    const providerUsed = semanticDirector?.provider === "minimax"
+                      && String(semanticDirector.status || "").startsWith("used");
+                    const previewReview = currentItem.edit_plan.director_plan?.director_preview_review;
+                    const previewReviewCompleted = previewReview?.status === "completed"
+                      && previewReview.preview_rendered === true;
+                    return (
+                      <Space wrap>
+                        <Tag color={providerUsed ? "green" : "gold"}>
+                          {providerUsed ? "智能导演已生成提案" : "本地安全方案"}
+                        </Tag>
+                        <Tag>
+                          语义理解 {semanticDirector?.provider_annotation_count ?? 0} / {semanticDirector?.input_segment_count ?? 0}
+                        </Tag>
+                        <Tag color="orange">
+                          接受 {creativeDirector?.compiled_count ?? semanticDirector?.compiled_count ?? 0}
+                        </Tag>
+                        {(creativeDirector?.rejected_count ?? semanticDirector?.rejected_count ?? 0) > 0 && (
+                          <Tag color="red">
+                            已拒绝 {creativeDirector?.rejected_count ?? semanticDirector?.rejected_count ?? 0}
+                          </Tag>
+                        )}
+                        <Tag color={!providerUsed ? undefined : previewReviewCompleted ? "green" : previewReview?.status === "failed" ? "red" : "blue"}>
+                          {!providerUsed
+                            ? "低清复核不适用"
+                            : previewReviewCompleted
+                              ? "低清复核已完成"
+                              : previewReview?.status === "failed"
+                                ? "低清复核未通过"
+                                : "低清复核待执行"}
+                        </Tag>
+                      </Space>
+                    );
+                  })()}
                   <Space wrap>
                     <Text strong>AI 导演计划：</Text>
                     <Tag color="purple">{currentItem.edit_plan.director_plan.plan_version}</Tag>
@@ -2648,6 +2684,16 @@ export default function VideoEditorPage() {
                   </Space>
                   <Text type="secondary">
                     钩子使用原片完整原话，只出现一次；字幕、画面和配乐共用一条时间轴。
+                  </Text>
+                  {currentItem.edit_plan.director_plan.cache_upgrade_notice && (
+                    <Text type="warning">
+                      {currentItem.edit_plan.director_plan.cache_upgrade_notice}
+                    </Text>
+                  )}
+                  <Text type="secondary">
+                    {currentItem.edit_plan.director_plan.semantic_director?.provider === "minimax"
+                      ? "已完成语义理解 → 已生成剪辑提案 → 已通过本地检查；低清复核和正式渲染会继续显示真实状态。"
+                      : "已完成语义理解；当前没有可用的 MiniMax 提案，已保留人物主镜头和安全降级。"}
                   </Text>
                   <Text type="secondary">
                     {currentItem.edit_plan.director_plan.asset_requests?.length

@@ -1,0 +1,24 @@
+{
+  "asset_id": "icon-tabler-alert-triangle",
+  "kind": "label_icon",
+  "name": "alert-triangle",
+  "editorial_kinds": [
+    "negative"
+  ],
+  "stored_name": "icon-tabler-alert-triangle.png",
+  "media_type": "image/png",
+  "source_provider": "Tabler Icons",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_mit_asset",
+  "rights_holder": "Paweł Kuna / Tabler Icons contributors",
+  "attribution_required": true,
+  "attribution_text": "Icons: Paweł Kuna / Tabler Icons contributors — https://github.com/tabler/tabler-icons — MIT",
+  "authorization_status": "confirmed",
+  "rights_status": "mit",
+  "publish_licensed": true,
+  "license_name": "MIT",
+  "license_url": "https://github.com/tabler/tabler-icons/blob/master/LICENSE",
+  "source_page": "https://github.com/tabler/tabler-icons",
+  "sha256": "7cafdb8c5ab224e8a12e70119b4aaf4a080670e592a7084f2c530a74c0c8aeb0",
+  "usage": "label_furniture_icon_15_to_25_percent_of_label_width"
+}

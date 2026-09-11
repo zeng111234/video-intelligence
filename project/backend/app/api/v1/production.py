@@ -17,7 +17,7 @@ from src.services.production import (
     IdempotencyConflictError,
     normalize_display_title,
 )
-from src.services.style_presets import PRESET_GRAMMAR_ONLY
+from src.services.style_presets import PRESET_SEMANTIC_ADAPTIVE
 from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/production", tags=["production"])
@@ -45,7 +45,7 @@ class BatchCreateRequest(BaseModel):
         "talking-head-semantic-adaptive-v1",
         "talking-head-local-grammar-v2",
         "talking-head-grammar-only-v1",
-    ] = PRESET_GRAMMAR_ONLY
+    ] = PRESET_SEMANTIC_ADAPTIVE
     candidate_ids: list[str] = Field(default_factory=list, max_length=400)
     items: list["BatchSourceItem"] = Field(default_factory=list, max_length=400)
 

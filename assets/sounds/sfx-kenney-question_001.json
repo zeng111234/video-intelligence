@@ -1,0 +1,28 @@
+{
+  "asset_id": "sfx-kenney-interface-question_001",
+  "kind": "sound_effect",
+  "name": "kenney-interface-question_001",
+  "display_name_zh": "音效_疑问提示_界面包_001",
+  "description_zh": "疑问提示类候选音效；用途根据原作者文件分类推断，尚未试听。",
+  "tags_zh": [
+    "疑问提示",
+    "音效"
+  ],
+  "avoid_when_zh": "未经试听，不应随机用于所有强调；否定、疑问句不能仅凭关键词配成功音。",
+  "review_status": "decoded_not_auditioned",
+  "stored_name": "sfx-kenney-question_001.wav",
+  "media_type": "audio/wav",
+  "source_provider": "Kenney",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_cc0_asset",
+  "rights_holder": "Kenney",
+  "authorization_status": "confirmed",
+  "rights_status": "cc0_public_domain",
+  "publish_licensed": true,
+  "license_name": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "source_url": "https://kenney.nl/assets/interface-sounds",
+  "sha256": "2e65ad1235f45c08bd08bf07326584ba2faf4ee327dc62c30629b826b1b7f6d8",
+  "duration_seconds": 0.4907,
+  "suggested_category": "question"
+}

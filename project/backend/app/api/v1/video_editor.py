@@ -164,7 +164,9 @@ class BatchCreateRequest(BaseModel):
     output_resolution: str = Field("1080x1920", pattern="^\\d{2,5}x\\d{2,5}$")
     output_fps: int = Field(30, ge=15, le=60)
     output_bitrate: str = Field("4M", pattern="^\\d+(?:\\.\\d+)?M$")
-    bgm_enabled: bool = True
+    # Voice-first default: background music is opt-in; short event SFX are
+    # scheduled by the renderer independently.
+    bgm_enabled: bool = False
     bgm_id: str | None = None
     bgm_volume: float = Field(0.24, ge=0, le=1)
     output_profile: str | None = Field(

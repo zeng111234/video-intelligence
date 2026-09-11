@@ -76,16 +76,19 @@ def build_semantic_visual_request(
     source_text = _clean(annotation.get("semantic_text") or text)
     if not source_text:
         return None
-    if not subject and not any(role in _VISUAL_ROLES for role in roles):
+    role_set = set(roles)
+    numeric_roles = {"NUMBER", "PRICE", "PERCENT"}
+    concrete_roles = role_set - numeric_roles
+    # Numbers, prices, and percentages are editorial facts, not stock-footage
+    # subjects.  They may still accompany a concrete PRODUCT/PROCESS/etc.
+    # request, but a standalone numeric beat must stay on the subtitle/data
+    # track and never enter the external-asset planner.
+    if not subject and not concrete_roles:
+        return None
+    if not concrete_roles:
         return None
 
-    role_set = set(roles)
-    if role_set & {"NUMBER", "PRICE", "PERCENT"}:
-        visual_type = "data"
-        preferred_mode = "pip"
-        expected_context = "the stated number, price, or percentage"
-        fallback = "numeric_emphasis_or_safe_camera"
-    elif role_set & {"COMPARISON"}:
+    if role_set & {"COMPARISON"}:
         visual_type = "comparison"
         preferred_mode = "full"
         expected_context = "the two source-grounded sides of the comparison"
@@ -123,4 +126,3 @@ def build_semantic_visual_request(
         "grounded_in_transcript": True,
         "semantic_director_version": annotation.get("semantic_director_version"),
     }
-

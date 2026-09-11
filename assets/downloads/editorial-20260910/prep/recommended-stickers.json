@@ -1,0 +1,266 @@
+[
+  {
+    "id": "confirm",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\confirm.png",
+    "display_name": "贴纸_确认对勾_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "warning",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\warning.png",
+    "display_name": "贴纸_风险警示_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "gift",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\gift.png",
+    "display_name": "贴纸_赠品礼物_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "lock",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\lock.png",
+    "display_name": "贴纸_安全锁_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "idea",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\idea.png",
+    "display_name": "贴纸_灵感灯泡_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "target",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\target.png",
+    "display_name": "贴纸_目标靶心_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "cancel",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\cancel.png",
+    "display_name": "贴纸_取消叉号_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "question",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\question.png",
+    "display_name": "贴纸_疑问问号_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "attention",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\attention.png",
+    "display_name": "贴纸_重点感叹号_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "star",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\star.png",
+    "display_name": "贴纸_星级亮点_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "thumbs-up",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\thumbs-up.png",
+    "display_name": "贴纸_认可点赞_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  },
+  {
+    "id": "sparkles",
+    "png": "C:\\Users\\zeng\\Desktop\\video\\assets\\downloads\\editorial-20260910\\prep\\png\\sparkles.png",
+    "display_name": "贴纸_闪光强调_彩色矢量",
+    "preview_only_geometry": {
+      "canvas": [
+        720,
+        1280
+      ],
+      "box": [
+        540,
+        660,
+        150,
+        150
+      ]
+    },
+    "review": "single_frame_readability_checked_not_motion_acceptance",
+    "restriction": "需逐镜头避脸避字幕；示意叠图不表示适合该句语义。",
+    "recommendation_status": "withdrawn",
+    "auto_select": false,
+    "withdrawal_reason": "用户否定卡通风格；仅留存，不作为商务口播推荐或默认素材。"
+  }
+]

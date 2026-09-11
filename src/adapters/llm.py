@@ -168,6 +168,9 @@ class DisabledCopywritingEngine:
     def annotate_semantic_timeline(self, **kwargs):
         raise LLMAdapterError("未配置语义导演 API Key，无法调用模型。")
 
+    def review_director_preview(self, **kwargs):
+        raise LLMAdapterError("未配置语义导演 API Key，无法复核低清预览。")
+
 
 class SandboxCopywritingEngine:
     """离线沙箱文案引擎，不发起真实 LLM 调用。"""
@@ -327,6 +330,9 @@ class SandboxCopywritingEngine:
 
     def annotate_semantic_timeline(self, **kwargs):
         raise LLMAdapterError("演示模式未执行真实语义导演。")
+
+    def review_director_preview(self, **kwargs):
+        raise LLMAdapterError("演示模式未执行真实低清视觉复核。")
 
 
 class OpenAICompatibleCopywritingEngine:
@@ -796,14 +802,20 @@ class OpenAICompatibleCopywritingEngine:
         segments,
         duration_seconds: float,
         keyframes=None,
+        available_assets=None,
+        capabilities=None,
     ):
-        """Ask the configured model for semantic labels only."""
+        """Ask the configured model for transcript-grounded creative proposals."""
         from src.services.semantic_director import semantic_director_prompt
 
         if not self.api_key:
             raise LLMAdapterError("未配置语义导演 API Key，无法调用模型。")
         system_prompt, user_prompt = semantic_director_prompt(
-            segments, duration_seconds
+            segments,
+            duration_seconds,
+            keyframes=keyframes,
+            available_assets=available_assets,
+            capabilities=capabilities,
         )
         if keyframes:
             timestamps = [
@@ -837,6 +849,55 @@ class OpenAICompatibleCopywritingEngine:
             return json.loads(cleaned)
         except json.JSONDecodeError as exc:
             raise LLMAdapterError("语义导演返回的 JSON 无效。") from exc
+
+    def review_director_preview(
+        self,
+        *,
+        preview_frames,
+        events,
+        subtitle_text,
+    ) -> dict[str, Any]:
+        """Review one rendered preview without changing transcript facts."""
+
+        if not self.api_key:
+            raise LLMAdapterError("未配置语义导演 API Key，无法复核低清预览。")
+        system_prompt = (
+            "你是短视频低清预览质检员。只返回严格 JSON。只能指出遮挡、布局、素材相关性、"
+            "节奏和音效绑定问题，或提出有限的安全修订；绝对不能修改字幕原文、数字、否定表达、"
+            "来源或授权，也不能新增素材。修订 action 只能是 remove_event、reduce_strength、"
+            "change_layout、change_asset、move_anchor、shorten_duration、change_caption_treatment、remove_sfx。"
+            '格式：{"verdict":"pass或revise","issues":[],"revisions":[]}。'
+        )
+        user_prompt = json.dumps(
+            {
+                "events": [dict(item) for item in events if isinstance(item, dict)],
+                "subtitle_text": [dict(item) for item in subtitle_text if isinstance(item, dict)],
+            },
+            ensure_ascii=False,
+        )
+        user_content: Any = user_prompt
+        if preview_frames:
+            user_content = [{"type": "text", "text": user_prompt}]
+            for frame in preview_frames:
+                data_url = str(frame.get("data_url") or "")
+                if data_url:
+                    user_content.append(
+                        {"type": "image_url", "image_url": {"url": data_url, "detail": "low"}}
+                    )
+        content = self._chat_completion(
+            system_prompt,
+            user_prompt,
+            user_content=user_content,
+            disable_thinking=True,
+        )
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.IGNORECASE)
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise LLMAdapterError("低清视觉复核返回的 JSON 无效。") from exc
+        if not isinstance(payload, dict):
+            raise LLMAdapterError("低清视觉复核返回的结果不是对象。")
+        return payload
 
     def _provider_name(self) -> str:
         if "deepseek.com" in self.base_url.lower():

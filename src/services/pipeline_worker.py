@@ -29,7 +29,7 @@ from src.models import (
 from src.services.avatar import AvatarServiceUnavailableError
 from src.services.production import candidate_xiaohongshu_search_keyword
 from src.services.publish_metadata import suggested_publish_draft
-from src.services.style_presets import PRESET_GRAMMAR_ONLY
+from src.services.style_presets import PRESET_SEMANTIC_ADAPTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -1097,7 +1097,7 @@ class PipelineWorker:
                 subtitle_segments=subtitle_segments,
                 subtitle_task_id=subtitle_task_id,
                 style_preset_id=str(
-                    run.config.get("style_preset_id") or PRESET_GRAMMAR_ONLY
+                    run.config.get("style_preset_id") or PRESET_SEMANTIC_ADAPTIVE
                 ),
             )
         except Exception as exc:

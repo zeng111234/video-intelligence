@@ -1,0 +1,21 @@
+{
+  "source": "Tabler Icons outline",
+  "license": "MIT",
+  "asset_count_svg": 175,
+  "asset_count_png": 175,
+  "categories": {
+    "education_exam": {"name":"中考辅导", "count":20},
+    "real_estate_home": {"name":"房产家装", "count":17},
+    "food_retail": {"name":"餐饮零售", "count":18},
+    "medical_health": {"name":"医疗健康", "count":16},
+    "finance_insurance": {"name":"金融保险", "count":16},
+    "auto_service": {"name":"汽车维修", "count":13},
+    "beauty_parenting": {"name":"美妆母婴", "count":13},
+    "legal_corporate": {"name":"法律企业", "count":15},
+    "travel_local": {"name":"旅游本地服务", "count":16},
+    "recruiting_career": {"name":"招聘职场", "count":15},
+    "ecommerce_delivery": {"name":"电商物流", "count":16}
+  },
+  "original_ids_preserved": true,
+  "chinese_copies": true
+}

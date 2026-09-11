@@ -8,10 +8,16 @@ small so the A-roll remains dominant.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
+
+# Licensed sticker images (reviewed third-party set) live beside the drawn
+# vectors' fallback; each image has a sidecar metadata file.
+_STICKER_LIBRARY_DIR = Path(__file__).resolve().parents[2] / "assets" / "stickers"
 
 
 _ROLE_RULES: tuple[tuple[str, frozenset[str], str, str], ...] = (
@@ -290,10 +296,336 @@ def build_editorial_sticker_events(
     return events
 
 
+_NEGATION_FOR_MARKS = re.compile(
+    r"别让|别把|不要让|不要把|不是|并非|没有|取消|不能|不可|禁止|避免|小心|风险|过头|过短|再长|再短"
+)
+
+# Semantic role -> editorial kind for the icon label, following the mapping
+# table in the icon integration guide.  Order matters: the first role present
+# wins, so a specific meaning beats a generic KEY_CLAIM.
+_ICON_KIND_BY_ROLE: tuple[tuple[str, frozenset[str]], ...] = (
+    ("negative", frozenset({"WARNING", "NEGATIVE", "RISK"})),
+    ("number", frozenset({"PRICE", "PERCENT", "NUMBER"})),
+    ("cta", frozenset({"CTA"})),
+    ("process", frozenset({"PROCESS", "STEP", "LOCATION", "PRODUCT"})),
+    ("positive", frozenset({"POSITIVE", "CONCLUSION"})),
+)
+
+
+def build_icon_label_events(
+    segments: Sequence[Mapping[str, Any]],
+    *,
+    duration_seconds: float,
+    max_events: int = 4,
+    min_gap_seconds: float = 3.5,
+) -> list[dict[str, Any]]:
+    """Build grounded icon-label events from the director's annotations.
+
+    The sticker planner only knows about offers and coupons, so a clip with no
+    promotional wording produced no overlay at all even though the reviewed
+    icon library covers confirmation, warning, place and process beats.  This
+    planner fills that gap using the same grounded annotations the rest of the
+    plan already trusts, and it enforces the guide's prohibitions:
+
+    * a confirmation mark is never attached to a negated or cancelled sentence;
+    * the event carries only the reviewed segment text, so no wording is
+      invented.
+
+    Density is capped by count and by a minimum gap, so a talking head keeps
+    breathing room instead of collecting a tag on every line.
+    """
+
+    if duration_seconds <= 0:
+        return []
+    events: list[dict[str, Any]] = []
+    last_start = -1000.0
+    used_kinds: set[str] = set()
+    for index, segment in enumerate(
+        sorted(segments, key=lambda item: float(item.get("start") or 0))
+    ):
+        if len(events) >= max_events:
+            break
+        source_text = str(
+            segment.get("source_text") or segment.get("text") or ""
+        ).strip()
+        if not source_text:
+            continue
+        roles = {
+            str(role).strip().upper()
+            for role in segment.get("semantic_roles") or []
+            if str(role).strip()
+        }
+        if not roles:
+            single = str(segment.get("semantic_role") or "").strip().upper()
+            if single:
+                roles.add(single)
+        if not roles:
+            continue
+        kind = next(
+            (
+                candidate
+                for candidate, accepted in _ICON_KIND_BY_ROLE
+                if roles & accepted
+            ),
+            "",
+        )
+        if not kind:
+            continue
+        if kind == "positive" and _NEGATION_FOR_MARKS.search(source_text):
+            # A confirmation label must not assert a negated sentence.
+            continue
+        try:
+            start = max(0.0, float(segment.get("start") or 0))
+            end = min(float(segment.get("end") or start), duration_seconds)
+        except (TypeError, ValueError):
+            continue
+        if end <= start or start - last_start < min_gap_seconds:
+            continue
+        if kind in used_kinds:
+            # One mark per meaning keeps the trail from reading as a template.
+            continue
+        label = str(segment.get("semantic_text") or source_text).strip()
+        if not label:
+            continue
+        events.append(
+            {
+                "event_id": f"icon-label-{len(events) + 1:02d}",
+                "type": "semantic_sticker",
+                "style_id": f"editorial_{kind}",
+                "asset_category": "custom_semantic_sticker",
+                "start": round(start, 3),
+                "end": round(end, 3),
+                "semantic_text": label,
+                "source_text": source_text,
+                "semantic_role": sorted(roles)[0],
+                "source_segment_index": segment.get("source_segment_index", index),
+                "grounded_in_text": True,
+                "importance": 0.8,
+                "visual_intensity": 2,
+                "reason": "语义角色对应的品牌色标签",
+                "sfx_profile": (
+                    "warning_tick" if kind == "negative"
+                    else "success_ping" if kind == "positive"
+                    else "pop_soft" if kind == "number"
+                    else "tick_soft"
+                ),
+                "source": "VideoInsight project-owned editorial vector",
+                "license": "project-owned-local-vector",
+                "third_party_cost": 0,
+                "animation": "slide_pop_rotate_fade",
+                "side": "right" if len(events) % 2 == 0 else "left",
+                "safe_area": "lower_caption_safe_band",
+            }
+        )
+        last_start = start
+        used_kinds.add(kind)
+    return events
+
+
+_ICON_LIBRARY_DIR = Path(__file__).resolve().parents[2] / "assets" / "icons"
+
+# The OpenMoji sticker set is colourful and character-like, which reads as a
+# chat emoji rather than a broadcast graphic.  Editorial marks therefore prefer
+# the professional monochrome Tabler set, whose sidecars already declare which
+# editorial kinds they serve (``editorial_kinds``), so no parallel table is
+# needed here and the two sets cannot drift apart.
+# Alphabetical order picked ``bulb`` as the success mark and ``chart-bar`` as
+# the number mark, because sorting by filename put them ahead of ``check`` and
+# ``percentage``.  Prefer the semantically strongest glyph per kind and keep the
+# alphabetical pass only as a fallback.
+_ICON_PREFERENCE: dict[str, tuple[str, ...]] = {
+    "positive": ("circle-check", "check", "shield-check", "checklist", "user-check"),
+    "negative": ("alert-triangle", "alert-circle", "circle-x", "x"),
+    "number": ("percentage", "coin", "report-analytics", "chart-line", "chart-bar"),
+    "offer_compare": ("git-compare", "discount", "shopping-cart", "tag"),
+    "process": ("route", "map-pin", "package", "timeline", "file-text"),
+    "cta": ("arrow-right", "message", "phone-call", "mail"),
+    "coupon": ("discount", "shopping-cart", "tag"),
+}
+
+
+def _professional_icon_for_kind(kind: str) -> str:
+    """Return an authorised icon path for an editorial kind, or an empty string.
+
+    Membership comes from the sidecar's ``editorial_kinds``.  Authorization and
+    the image sha256 are re-checked so a library entry that fails the rights
+    check falls back instead of shipping.
+    """
+
+    wanted = str(kind or "").strip()
+    if not wanted:
+        return ""
+    try:
+        sidecars = sorted(_ICON_LIBRARY_DIR.glob("*.json"))
+    except OSError:
+        return ""
+    candidates: dict[str, str] = {}
+    for sidecar in sidecars:
+        try:
+            metadata = json.loads(sidecar.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        declared = metadata.get("editorial_kinds")
+        if isinstance(declared, str):
+            try:
+                declared = json.loads(declared.replace("'", '"'))
+            except ValueError:
+                declared = [declared]
+        if wanted not in (declared or []):
+            continue
+        if str(metadata.get("authorization_status") or "") != "confirmed":
+            continue
+        image_path = sidecar.with_suffix(".png")
+        try:
+            if not image_path.is_file():
+                continue
+            digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+        except OSError:
+            continue
+        if str(metadata.get("sha256") or "").casefold() != digest.casefold():
+            continue
+        candidates[str(metadata.get("name") or sidecar.stem)] = str(image_path)
+    for preferred in _ICON_PREFERENCE.get(wanted, ()):
+        if preferred in candidates:
+            return candidates[preferred]
+    if candidates:
+        return candidates[sorted(candidates)[0]]
+    return ""
+
+
+def _sticker_asset_for_kind(kind: str) -> str:
+    """Pick a reviewed sticker image for an editorial kind, if one exists.
+
+    Selection is deterministic (sorted by asset id) so the same copy always
+    yields the same sticker instead of flickering between candidates on
+    re-render.  Returns an empty string when the library has nothing for this
+    kind, which sends the caller to the drawn fallback.
+    """
+
+    professional = _professional_icon_for_kind(kind)
+    if professional:
+        return professional
+    if not kind:
+        return ""
+    try:
+        metadata_files = sorted(_STICKER_LIBRARY_DIR.glob("*.json"))
+    except OSError:
+        return ""
+    matches: list[str] = []
+    for metadata_path in metadata_files:
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if metadata.get("kind") != "sticker":
+            continue
+        if metadata.get("authorization_status") != "confirmed":
+            continue
+        if str(metadata.get("editorial_kind") or "") != kind:
+            continue
+        stored = str(metadata.get("stored_name") or "")
+        if stored and (image_path := _STICKER_LIBRARY_DIR / stored).is_file():
+            matches.append(stored)
+    return matches[0] if matches else ""
+
+
+def _render_sticker_asset(event: Mapping[str, Any], output_path: Path) -> bool:
+    """Draw a licensed sticker image when the event names one.
+
+    Returns ``False`` so the caller falls back to the drawn vector form when no
+    usable asset is bound.  Authorization is re-checked here rather than trusted
+    from the event, because the event travels through plans and caches.
+    """
+
+    asset_name = str(event.get("sticker_asset") or "").strip()
+    if not asset_name:
+        # No explicit binding: fall back to the reviewed image for this
+        # editorial kind before giving up on the drawn vector.
+        asset_name = _sticker_asset_for_kind(
+            str(event.get("style_id") or "").removeprefix("editorial_")
+        )
+    if not asset_name:
+        return False
+    candidate = Path(asset_name)
+    if candidate.is_absolute():
+        # A professional icon from ``assets/icons``: already rights-checked by
+        # the resolver.  It is a monochrome glyph, so tint it -- raw black line
+        # art disappears against the dark plate and the speaker's clothing.
+        try:
+            from PIL import Image
+
+            with Image.open(candidate) as glyph:
+                stroke = glyph.convert("RGBA")
+                tint = tuple(
+                    int(event.get(key) or fallback)
+                    for key, fallback in (
+                        ("text_color_r", 255),
+                        ("text_color_g", 255),
+                        ("text_color_b", 255),
+                    )
+                )
+                tinted = Image.new("RGBA", stroke.size, (*tint, 0))
+                tinted.putalpha(stroke.split()[-1])
+                tinted.save(output_path)
+        except (OSError, ValueError):
+            return False
+        return True
+    library = _STICKER_LIBRARY_DIR
+    image_path = library / asset_name
+    metadata_path = image_path.with_suffix(".json")
+    try:
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if metadata.get("authorization_status") != "confirmed":
+        return False
+    if metadata.get("kind") != "sticker":
+        return False
+    try:
+        digest = hashlib.sha256(image_path.read_bytes()).hexdigest()
+    except OSError:
+        return False
+    if str(metadata.get("sha256") or "").casefold() != digest.casefold():
+        return False
+    try:
+        from PIL import Image
+
+        with Image.open(image_path) as sticker:
+            sticker.convert("RGBA").save(output_path)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def render_editorial_sticker(event: Mapping[str, Any], output_path: Path) -> None:
     """Render a transparent, custom vector sticker with no external glyphs."""
 
     from PIL import Image, ImageDraw, ImageFont
+
+    # Preferred treatment for a grounded beat: a unified brand-coloured text
+    # label with a small outline icon, per the icon integration guide ("let the
+    # renderer build a consistent label rather than pasting raw artwork").  The
+    # image sticker below stays as the fallback when no icon fits or the beat
+    # must not carry one (for example a success mark on a negated sentence).
+    try:
+        from src.services.icon_labels import compose_icon_label
+
+        kind = str(event.get("style_id") or "").removeprefix("editorial_")
+        label_text = str(
+            event.get("semantic_text") or event.get("text") or ""
+        ).strip()
+        if label_text and compose_icon_label(
+            kind=kind, text=label_text, output_path=output_path
+        ):
+            return
+    except (ImportError, OSError, ValueError):
+        pass
+
+    # A licensed image sticker takes precedence over the drawn form: the
+    # reviewed OpenMoji set is what the design review approved, while the drawn
+    # vector remains the fallback for events that carry no asset binding.
+    if _render_sticker_asset(event, output_path):
+        return
 
     width, height = 300, 220
     canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))

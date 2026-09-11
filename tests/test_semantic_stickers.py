@@ -6,6 +6,7 @@ from src.services.video_editor_workflow import (
     _clean_grammar_motion_events,
     _resolve_local_sound_effect,
     _select_sparse_sfx_items,
+    _visual_sfx_items,
 )
 
 
@@ -64,6 +65,37 @@ def test_sticker_sound_is_bound_to_entry_not_previous_keyword():
     events = _select_sparse_sfx_items([sticker], [keyword], duration_seconds=30, target_count=4)
     assert len(events) == 1
     assert events[0]["start"] == 12
+
+
+def test_every_rendered_sticker_and_vector_gets_a_bound_sfx():
+    items = _visual_sfx_items(
+        [
+            {
+                "event_id": "sticker-1",
+                "start": 1.0,
+                "end": 2.0,
+                "asset_category": "custom_semantic_sticker",
+                "semantic_role": "PRICE",
+            }
+        ],
+        [
+            {
+                "start": 6.0,
+                "end": 7.0,
+                "asset_id": "editorial-arrow",
+                "semantic_role": "PROCESS",
+            }
+        ],
+    )
+
+    assert [item["event_id"] for item in items] == [
+        "sticker-1",
+        "vector-sticker-01",
+    ]
+    assert [item["sfx_profile"] for item in items] == [
+        "pop_soft",
+        "whoosh_soft",
+    ]
 
 
 def test_symbol_candidates_obey_sfx_budget_and_dedup():

@@ -1,0 +1,20 @@
+{
+  "asset_id": "sfx-kenney-interface-glass_005",
+  "kind": "sound_effect",
+  "name": "kenney-interface-glass_005",
+  "stored_name": "sfx-kenney-glass_005.wav",
+  "media_type": "audio/wav",
+  "source_provider": "Kenney",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_cc0_asset",
+  "rights_holder": "Kenney",
+  "authorization_status": "confirmed",
+  "rights_status": "cc0_public_domain",
+  "publish_licensed": true,
+  "license_name": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "source_url": "https://kenney.nl/assets/interface-sounds",
+  "sha256": "69b80f1e5f07962c842d3e45497507d180118b5d46333c519274f121a08c632b",
+  "duration_seconds": 0.1321,
+  "suggested_category": "glass"
+}

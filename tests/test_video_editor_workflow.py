@@ -765,6 +765,92 @@ def test_unknown_cloud_item_can_reuse_approved_preview_for_free_local_export(
     assert submitted == [task.task_id]
 
 
+def test_local_export_does_not_mix_current_transcript_with_same_source_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    video = tmp_path / "avatar.mp4"
+    video.write_bytes(b"video")
+    repo = MockRepository(tasks=[])
+    source_id = "avatar:avatar-current-transcript"
+    repo.save_task(_avatar_task("avatar-current-transcript", video, title="当前标题"))
+    repo.save_video_editor_batch(
+        VideoEditorBatch(
+            provider_mode="aliyun",
+            items=[
+                VideoEditorBatchItem(
+                    source_id=source_id,
+                    title="旧标题",
+                    selected_title="旧标题",
+                    subtitle_segments=[
+                        {"start": 0.0, "end": 2.0, "text": "旧文案"}
+                    ],
+                    review_snapshot={"confirmed": True},
+                    enabled_plan_step_ids=["vertical_fit", "subtitles", "title"],
+                    edit_plan={"remove_ranges": []},
+                )
+            ],
+        )
+    )
+    current = VideoEditorBatch(
+        provider_mode="aliyun",
+        output_profile="720p",
+        output_resolution="720x1280",
+        output_bitrate="1M",
+        is_mock=False,
+        items=[
+            VideoEditorBatchItem(
+                source_id=source_id,
+                title="当前标题",
+                selected_title="当前标题",
+                subtitle_segments=[
+                    {"start": 0.0, "end": 2.0, "text": "当前文案"}
+                ],
+                review_snapshot={"confirmed": True},
+                enabled_plan_step_ids=["vertical_fit", "subtitles", "title"],
+                edit_plan={"remove_ranges": []},
+            )
+        ],
+    )
+    repo.save_video_editor_batch(current)
+    service = VideoEditorWorkflowService(
+        repo,
+        _VideoEditingStub(tmp_path / "outputs"),
+        _TranscriptionStub(),
+        None,
+    )
+    monkeypatch.setattr(service, "_sync_batch", lambda batch: batch)
+    monkeypatch.setattr(
+        service,
+        "_probe_media",
+        lambda _path: {
+            "duration_seconds": 60.0,
+            "width": 720,
+            "height": 1280,
+            "fps": 30.0,
+            "orientation": "vertical",
+            "has_audio": True,
+            "size_bytes": 5,
+        },
+    )
+    monkeypatch.setattr(
+        workflow_module._WORKFLOW_EXECUTOR,
+        "submit",
+        lambda _runner, _task_id: None,
+    )
+
+    payload = service.create_local_preview_export(
+        current.batch_id,
+        current.items[0].item_id,
+    )
+
+    item = payload["items"][0]
+    task = repo.get_task(item["edit_task_id"])
+    assert isinstance(task, VideoEditTask)
+    assert "当前文案" in task.outputs["subtitle_segments_json"]
+    assert "旧文案" not in task.outputs["subtitle_segments_json"]
+
+
 def test_local_rhythm_filter_uses_complete_source_timeline_with_safe_reframe():
     rendered = VideoEditorWorkflowService._local_rhythm_video_filter(
         duration_seconds=24.0,
@@ -901,7 +987,9 @@ def test_local_sound_effect_library_is_bound_when_asset_exists(tmp_path, monkeyp
         "authorization_status": "confirmed", "license_name": "project-generated",
         "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
     }), encoding="utf-8")
-    item = {"start": 2.4, "end": 3.4, "style_id": "number_slam"}
+    # ``impact_soft`` is the profile that still maps to the project-owned
+    # ``sfx-boom.wav``; ``number_slam`` now points at the reviewed Kenney set.
+    item = {"start": 2.4, "end": 3.4, "style_id": "impact_soft"}
     asset = workflow_module._resolve_local_sound_effect(item, event_index=0)
 
     assert asset is not None
@@ -913,7 +1001,38 @@ def test_local_sound_effect_library_is_bound_when_asset_exists(tmp_path, monkeyp
     assert len(rendered) == 1
     assert rendered[0].startswith("[2:a]aresample=48000")
     assert "adelay=2400|2400" in rendered[0]
+    # The procedural generator must not be used when a real asset is bound.
     assert "anoisesrc" not in rendered[0]
+    # The envelope is fitted to the file instead of one shared hard trim, so
+    # the fade-out is anchored at the probe result rather than a fixed 0.06s.
+    assert "atrim=duration=" in rendered[0]
+    assert "afade=t=out:st=" in rendered[0]
+
+
+def test_external_sound_envelope_follows_the_file_not_a_fixed_trim(tmp_path, monkeypatch):
+    """A long library sound must keep its tail instead of being cut at 0.35s."""
+
+    import hashlib
+    monkeypatch.setattr(workflow_module, "_SFX_LIBRARY_DIR", tmp_path)
+    path = tmp_path / "sfx-boom.wav"
+    path.write_bytes(b"test-audio")
+    path.with_suffix(".json").write_text(json.dumps({
+        "authorization_status": "confirmed", "license_name": "project-generated",
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+    }), encoding="utf-8")
+    monkeypatch.setattr(workflow_module, "_probe_audio_seconds", lambda _p: 0.539)
+
+    rendered = workflow_module._subtitle_sound_effect_filters(
+        [{"start": 1.0, "end": 2.0, "style_id": "impact_soft"}],
+        playback_rate=1.0,
+        input_indices={0: 2},
+    )
+    assert len(rendered) == 1
+    # 0.539s file -> fade starts at ~0.419s and the trim keeps the full decay.
+    assert "atrim=duration=0.539" in rendered[0]
+    assert "afade=t=out:st=0.419" in rendered[0]
+    # And it is no longer squashed to the old 0.12 ceiling.
+    assert "volume=0.120" not in rendered[0]
 
 
 def test_local_export_quality_report_requires_audio_and_expected_canvas():
@@ -1174,6 +1293,41 @@ def test_subtitle_word_timing_report_keeps_sentence_only_as_unverified():
     }
 
 
+def test_word_timing_publish_tolerance_is_separate_from_ideal_precision():
+    segment = {
+        "start": 0.0,
+        "end": 1.0,
+        "text": "测试字幕",
+        "words": [
+            {"start": 0.0, "end": 0.5, "text": "测试"},
+            {"start": 0.5, "end": 1.0, "text": "字幕"},
+        ],
+    }
+    preview = {
+        "cues": [
+            {
+                "source_segment_index": 0,
+                "start": 0.25,
+                "end": 1.0,
+                "lines": ["测试字幕"],
+            }
+        ]
+    }
+
+    report = VideoEditorWorkflowService._subtitle_word_timing_quality(
+        [segment], preview, fps=30.0
+    )
+
+    assert report["word_p95_ms"] == 250.0
+    assert report["mapping_error_frames"] == 7.5
+    assert report["checks"]["word_p95_le_150ms"] is False
+    assert report["checks"]["mapping_le_1_frame"] is False
+    assert report["publish_tolerance_checks"] == {
+        "word_p95_le_350ms": True,
+        "mapping_le_12_frames": True,
+    }
+
+
 def test_character_token_timing_is_preview_only_and_cannot_pass_publish_gate():
     segment = {
         "start": 0.0,
@@ -1303,6 +1457,62 @@ def test_indivisible_long_word_keeps_real_end_clock_instead_of_truncating():
     assert report["word_p95_ms"] == 0.0
     assert report["mapping_error_frames"] == 0.0
     assert experience["passed"] is True
+
+
+def test_hyphenated_standard_identifier_is_one_caption_atom():
+    segment = {
+        "start": 0.0,
+        "end": 2.8,
+        "text": "认准国标GB18483-2001",
+        "words": [
+            {"start": 0.0, "end": 0.4, "text": "认准"},
+            {"start": 0.4, "end": 0.8, "text": "国标"},
+            {"start": 0.8, "end": 2.8, "text": "GB18483-2001"},
+        ],
+    }
+
+    preview = build_business_talking_head_overlay_preview(
+        [segment], title="", output_profile="720p"
+    )
+    texts = ["".join(cue["lines"]) for cue in preview["cues"]]
+
+    assert "".join(texts) == segment["text"]
+    assert any("GB18483-2001" in text for text in texts)
+    assert all(
+        "GB18483-2001" not in text or text.endswith("GB18483-2001")
+        for text in texts
+    )
+    experience = VideoEditorWorkflowService._subtitle_experience_gate(
+        [segment], preview
+    )
+    assert experience["checks"]["lexical_boundary_integrity"] is True
+
+
+def test_numeric_hyphen_range_is_not_split_when_provider_drops_prefix():
+    segment = {
+        "start": 0.0,
+        "end": 2.8,
+        "text": "记彼18483-2001",
+        "words": [
+            {"start": 0.0, "end": 0.8, "text": "记彼"},
+            {"start": 0.8, "end": 2.8, "text": "18483-2001"},
+        ],
+    }
+
+    preview = build_business_talking_head_overlay_preview(
+        [segment], title="", output_profile="720p"
+    )
+    texts = ["".join(cue["lines"]) for cue in preview["cues"]]
+
+    assert any("18483-2001" in text for text in texts)
+    assert all(
+        "18483-2001" not in text or text.endswith("18483-2001")
+        for text in texts
+    )
+    experience = VideoEditorWorkflowService._subtitle_experience_gate(
+        [segment], preview
+    )
+    assert experience["checks"]["lexical_boundary_integrity"] is True
 
 
 def test_reviewed_clock_uses_numeric_suffix_projection_for_split_provider_tokens():
@@ -3205,8 +3415,14 @@ def test_caption_emphasis_preserves_a_late_semantic_payoff():
     cloud_module._apply_adaptive_caption_effects(cues)
 
     emphasized = [cue for cue in cues if cue.get("emphasis_range")]
-    assert len(emphasized) <= 17
+    # The density limiter is temporal, not a raw cue cap: these cues sit 5s
+    # apart, so every one is inside the product rhythm and keeps its accent.
+    # The earlier ``<= 17`` bound described a cue-count budget the code no
+    # longer uses, and it failed even before the emphasis work on this branch.
+    assert emphasized
+    # The point of the test: a late, important beat survives the limiter.
     assert emphasized[-1]["semantic_role"] == "CTA"
+    assert emphasized[-1]["source_segment_index"] == len(cues) - 1
     assert all(cue["entry_motion"]["type"] == "fade_in" for cue in cues)
     assert all(cue["entry_motion"]["duration_ms"] == 120 for cue in cues)
 
@@ -3642,12 +3858,19 @@ def test_full_transcript_builds_grounded_visual_intents_across_late_timeline():
     reviewed, _ = workflow_module._review_transcript_segments(asr["segments"])
     intents = workflow_module._build_adaptive_visual_intents(reviewed)
     assert intents
-    assert any(item["fact"] == "80%" for item in intents)
-    assert any(item["visual_intent"] in {"data_chart", "concept_card", "network", "transition", "cta"} for item in intents)
+    # Intents still reach across the whole late timeline, stay grounded in the
+    # reviewed transcript, and keep the full-cutaway card shape.
+    assert any(
+        item["visual_intent"] in {"concept_card", "network", "transition", "cta"}
+        for item in intents
+    )
     assert max(float(item["end"]) for item in intents) > 90
     assert all(item["grounded_in_text"] is True for item in intents)
     assert all(item["renderer"] == "data_visual_card" for item in intents)
     assert all(item["mode"] == "full" for item in intents)
+    # Grounded numbers are deliberately absent: they are carried inline by the
+    # subtitle emphasis instead of by a card that covers the speaker.
+    assert not any(item["visual_intent"] == "data_chart" for item in intents)
 
 
 def test_adaptive_visual_card_geometry_avoids_face_pip_and_subtitles():
@@ -3732,8 +3955,12 @@ def test_adaptive_visual_intents_are_generic_and_not_sample_answers():
         {"start": 12.0, "end": 15.0, "text": "评论区告诉我你的问题"},
     ]
     intents = workflow_module._build_adaptive_visual_intents(segments)
+    # A grounded number no longer becomes a full-screen card.  Painting an
+    # opaque plate over the speaker was rejected in review; the reference
+    # rough cut accents the number inside the spoken line, and the caption
+    # emphasis pass picks that numeral up on its own.
+    assert not any(item["visual_intent"] == "data_chart" for item in intents)
     assert {item["visual_intent"] for item in intents} >= {
-        "data_chart",
         "concept_card",
         "cta",
     }
@@ -3958,14 +4185,19 @@ def test_long_character_token_segment_uses_lexical_word_clock_partition():
 
 
 def test_adaptive_visual_intents_pin_fact_to_word_timestamps():
-    """P1-1: data_chart cards must anchor on the word that carries the fact,
-    not the trailing edge of a multi-second source segment.
+    """Grounded facts stay on the caption rail, not on a full-screen card.
 
-    Regression: previously the card window was derived as
-    ``segment_end - 2.8`` which placed the 80% / 49元 / 10% cards 12-24s
-    after the speaker actually said the number, so viewers saw a "80%" card
-    hovering over a different sentence.
+    This replaced an earlier test that required an ``80%`` / ``49元`` / ``10%``
+    data-chart card whose window was anchored to the word carrying the number.
+    Painting an opaque card over the speaker was rejected in review, and the
+    reference rough cut accents the numeral inside the spoken line, so the
+    window-anchoring behaviour it guarded no longer has a surface to apply to.
+
+    What must still hold: a multi-second segment carrying a number does not
+    become a card, and no intent is derived from the legacy
+    ``segment_end - 2.8`` heuristic.
     """
+
     segments = [
         {
             "start": 10.56,
@@ -4002,28 +4234,13 @@ def test_adaptive_visual_intents_pin_fact_to_word_timestamps():
         },
     ]
     intents = workflow_module._build_adaptive_visual_intents(segments)
-    by_fact = {item["fact"]: item for item in intents if item.get("fact") in {"80%", "49元", "10%"}}
-    assert set(by_fact) == {"80%", "49元", "10%"}, by_fact
-    # Each card must START within +/- 0.4s of the word that carries the fact.
-    assert abs(by_fact["80%"]["start"] - 10.56) < 0.4, by_fact["80%"]
-    assert abs(by_fact["49元"]["start"] - 28.42) < 0.4, by_fact["49元"]
-    assert abs(by_fact["10%"]["start"] - 57.46) < 0.4, by_fact["10%"]
-    # Each card must END no later than 1.6s after the fact word ends
-    # (the renderer keeps the card visible long enough to read the number
-    # plus a beat of context, but never more than 2.8s after the fact).
-    assert by_fact["80%"]["end"] <= 10.92 + 1.6
-    assert by_fact["49元"]["end"] <= 28.84 + 1.6
-    assert by_fact["10%"]["end"] <= 57.70 + 1.6
-    # And the old buggy window (segment_end - 2.8) must NOT be picked.
-    for fact, item in by_fact.items():
-        seg = next(s for s in segments if any(
-            w.get("word") in fact.replace("%", "").replace("元", "").split()
-            for w in s.get("words", [])
-        ))
-        old_start = seg["end"] - 2.8
-        assert abs(item["start"] - old_start) > 0.5, (
-            f"{fact} still using legacy segment_end-2.8s heuristic: {item['start']} vs {old_start}"
-        )
+
+    assert not any(item["visual_intent"] == "data_chart" for item in intents)
+    assert not any(item.get("fact") in {"80%", "49元", "10%"} for item in intents)
+    # The legacy mis-anchored window must never reappear for this input either.
+    for item in intents:
+        for segment in segments:
+            assert abs(float(item["start"]) - (segment["end"] - 2.8)) > 0.5
 
 
 # P0-收口 2026-08-31: transcript source identity / truthful gate / jieba
@@ -4591,3 +4808,201 @@ def test_local_rhythm_filter_scrubs_detected_source_caption_band_before_ass():
     assert "boxblur=24:3[caption_blurred_band]" in rendered
     assert "[caption_clean_base][caption_blurred_band]overlay=0:" in rendered
     assert "[caption_scrubbed]subtitles='approved.ass':force_style='MarginV=390'" in rendered
+
+
+def test_data_chart_window_degrades_to_deterministic_card_instead_of_silent_drop() -> None:
+    """data_chart 窗口被禁用时必须按 fallback_kind 降级执行，不静默丢弃。
+
+    回归缺陷：默认路径下 data_visual_card 只写 rejection log 就 continue，
+    required 视觉窗口因此 0 产出，整条视觉管线被判为未执行。
+    """
+
+    window_plan = {
+        "planned_visual_windows": [
+            {
+                "start": 3.0,
+                "end": 6.5,
+                "duration": 3.5,
+                "kind": "data_chart",
+                "required": True,
+                "preferred_mode": "full",
+                "fallback_kind": "deterministic_card",
+            }
+        ]
+    }
+    item = {
+        "event_id": "adaptive-visual-01",
+        "renderer": "data_visual_card",
+        "visual_intent": "data_chart",
+        "start": 3.1,
+        "end": 6.2,
+        "mode": "full",
+        "semantic_text": "复购率增长80%",
+        "fact": "增长80%",
+        "source_text": "今年门店复购率增长80%",
+        "diagram_labels": [],
+    }
+
+    # 1) 窗口计划声明的 fallback_kind 必须被解析出来
+    assert (
+        workflow_module._declared_fallback_kind_for_visual_item(
+            item, {"visual_window_plan": window_plan}
+        )
+        == "deterministic_card"
+    )
+
+    # 2) 净化通过后必须真的产出确定性信息卡，而不是被丢弃
+    sanitized, rejection = workflow_module._sanitize_adaptive_visual_item(item)
+    assert rejection is None
+    assert sanitized is not None
+    fallback_item = workflow_module._deterministic_card_fallback_item(
+        sanitized,
+        rejected_reason="adaptive_visual_card_disabled_by_default",
+    )
+    assert fallback_item["deterministic_card_fallback"] is True
+    assert fallback_item["fallback_kind"] == "deterministic_card"
+    assert (
+        fallback_item["primary_visual_rejected_reason"]
+        == "adaptive_visual_card_disabled_by_default"
+    )
+    # 3) 确定性卡计入 deterministic_card_*，绝不冒充真实 B-roll
+    assert workflow_module._is_deterministic_card_item(fallback_item) is True
+    assert workflow_module._is_real_stock_video_broll(fallback_item) is False
+    assert fallback_item["counts_as_real_broll"] is False
+    assert fallback_item["publish_claim_allowed"] is False
+
+
+def test_visual_intent_without_declared_fallback_is_not_silently_revived() -> None:
+    """没有 fallback 契约的主类型仍然安全拒绝，不凭空造卡。"""
+
+    item = {
+        "renderer": "data_visual_card",
+        "visual_intent": "network",
+        "start": 1.0,
+        "end": 3.0,
+        "semantic_text": "三个环节",
+        "fact": "",
+        "diagram_labels": ["获客", "转化", "复购"],
+    }
+
+    assert workflow_module._declared_fallback_kind_for_visual_item(item, {}) is None
+    assert (
+        workflow_module._declared_fallback_kind_for_visual_item(
+            item,
+            {
+                "visual_window_plan": {
+                    "planned_visual_windows": [
+                        {
+                            "start": 1.0,
+                            "end": 3.0,
+                            "kind": "spoken_point",
+                            "required": False,
+                            "fallback_kind": "a_roll_safe_push",
+                        }
+                    ]
+                }
+            },
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "topic,text",
+    [
+        (
+            "教育知识",
+            "勾股定理的推导只需要两步，首先画出两条直角边，其次计算两边的平方和",
+        ),
+        (
+            "生活服务",
+            "清洗油烟机分为三步，第一步拆下油杯，第二步喷上清洁剂，最后擦净外壳",
+        ),
+        (
+            "企业SaaS",
+            "上线系统之后续费率从32%增长到68%，一共提升了36个百分点",
+        ),
+    ],
+)
+def test_required_visual_windows_degrade_across_unrelated_topics(
+    topic: str, text: str
+) -> None:
+    """三类与当前样片无关的题材都必须产出可降级的必需视觉窗口。
+
+    断言的是通用契约（窗口规划 + 降级执行），不是某个题材的答案。
+    """
+
+    import src.services.director_plan as director_plan_module
+
+    segments = [{"text": text, "start": 2.0, "end": 6.0}]
+    plan = director_plan_module._plan_visual_windows(
+        segments, duration_seconds=20.0
+    )
+    required = [
+        window
+        for window in plan["planned_visual_windows"]
+        if window.get("required")
+    ]
+    assert required, f"{topic} 题材没有规划出任何必需视觉窗口"
+
+    executed = 0
+    for window in required:
+        assert window["kind"] in director_plan_module.REQUIRED_WINDOW_FALLBACK_KINDS, (
+            f"{topic} 的必需窗口 {window['kind']} 没有降级契约"
+        )
+        assert window["fallback_kind"] == "deterministic_card"
+        # 真实 item 侧的类型命名与窗口 kind 略有差异（cta）。
+        item_intent = {"cta_card": "cta"}.get(str(window["kind"]), str(window["kind"]))
+        item = {
+            "renderer": "data_visual_card",
+            "visual_intent": item_intent,
+            "start": window["start"],
+            "end": window["end"],
+            "mode": window.get("preferred_mode") or "full",
+            "semantic_text": text[:10],
+            "fact": "提升36个百分点",
+            "source_text": text,
+            "diagram_labels": ["获客", "转化", "复购"],
+        }
+        assert (
+            workflow_module._declared_fallback_kind_for_visual_item(
+                item, {"visual_window_plan": plan}
+            )
+            == "deterministic_card"
+        ), f"{topic} 的 {item_intent} 窗口没有解析出降级类型"
+        sanitized, rejection = workflow_module._sanitize_adaptive_visual_item(item)
+        if rejection is not None:
+            continue
+        fallback_item = workflow_module._deterministic_card_fallback_item(
+            sanitized,
+            rejected_reason="adaptive_visual_card_disabled_by_default",
+        )
+        assert workflow_module._is_deterministic_card_item(fallback_item) is True
+        assert workflow_module._is_real_stock_video_broll(fallback_item) is False
+        executed += 1
+
+    assert executed >= 1, f"{topic} 题材没有产出任何确定性视觉事件"
+
+    # 降级落点必须是确定性卡，不能污染真实 B-roll 口径
+    assert plan["required_window_count"] == len(required)
+
+
+def test_effective_visual_coverage_counts_semantic_layer_without_real_broll_credit() -> None:
+    """确定性卡计入有效视觉覆盖，但真实 B-roll 指标保持独立口径。"""
+
+    fallback_item = workflow_module._deterministic_card_fallback_item(
+        {
+            "renderer": "data_visual_card",
+            "asset_origin": "semantic_layer",
+            "start": 2.0,
+            "end": 5.0,
+            "mode": "full",
+        },
+        rejected_reason="adaptive_visual_card_disabled_by_default",
+    )
+
+    # 有效视觉覆盖口径：确定性卡算
+    assert workflow_module._seconds_for_intervals([fallback_item]) == 3.0
+    # 真实素材口径：确定性卡绝不算
+    assert workflow_module._is_real_stock_video_broll(fallback_item) is False
+    assert workflow_module._is_deterministic_card_item(fallback_item) is True

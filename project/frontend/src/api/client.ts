@@ -4,7 +4,6 @@
 
 import type {
   AdminStatusResponse,
-  AdminCreditUsageResponse,
   AsrCapabilityResponse,
   AnalyticsResponse,
   AvatarAsset,
@@ -955,14 +954,6 @@ export function getServerStatus(): Promise<ServerStatusResponse> {
 
 export function getCredits(): Promise<CreditBalanceResponse> {
   return request("/credits");
-}
-
-export function getAdminCreditUsage(
-  adminToken: string,
-): Promise<AdminCreditUsageResponse> {
-  return request("/credits/admin/usage", {
-    headers: { "X-Admin-Token": adminToken },
-  });
 }
 
 /** 管理员登录（账号+密码；兼容旧版 password-only） */
@@ -2210,7 +2201,7 @@ export function createVideoEditorBatch(params: {
       bgm_id: params.bgmId || null,
       bgm_volume: params.bgmVolume ?? 0.18,
       output_profile: params.outputProfile || null,
-      style_preset_id: params.stylePresetId || "talking-head-local-grammar-v2",
+      style_preset_id: params.stylePresetId || "talking-head-semantic-adaptive-v1",
       quote_id: params.quoteId || null,
       billing_confirmation: params.billingConfirmation
         ? {

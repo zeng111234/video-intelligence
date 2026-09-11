@@ -707,9 +707,156 @@ def _short_text(value: str, *, max_length: int = 8) -> str:
     return value[:max_length] if len(value) > max_length else value
 
 
+def _conclusion_is_negative(source_text: str) -> bool:
+    """Return whether a conclusion role actually reports a bad outcome.
+
+    A "CONCLUSION" marker is a discourse marker (``所以`` / ``结果`` / ``最后``),
+    not a verdict.  ``别让客户名单变成库存`` is a conclusion in form while its
+    content is a warning, so a success check mark would assert the opposite of
+    what was said.  Polarity is read from the sentence; no sample transcript is
+    special-cased.
+    """
+
+    text = re.sub(r"\s+", "", str(source_text or ""))
+    if not text:
+        return False
+    if any(term in text for term in _NEGATIVE) or any(term in text for term in _WARNING):
+        return True
+    return bool(re.search(r"别让|别把|不要让|不要把|变(?:成|成)库存|小心", text))
+
+
+def _drop_redundant_emphasis_events(
+    events: Sequence[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Enforce one visual emphasis per spoken beat.
+
+    The base subtitle already highlights the grounded keyword, so an
+    independent text block that repeats that keyword, or the sentence it sits
+    in, would print the same words twice on the same frame (the shipped
+    duplicate-text defect).
+
+    The fix reuses the renderer's existing contract instead of inventing a new
+    one.  A grounded ``text_emphasis`` block is the single materialised visual
+    for its beat; every caption-native ``keyword_emphasis`` on that same span
+    is demoted to ``render_policy="caption_only"`` so it still drives the
+    burned-in subtitle highlight while no longer painting a second text layer.
+    Overlapping keyword candidates on one span are reduced to the more
+    specific phrase, because only one of them can carry the accent.
+    """
+
+    ordered = sorted(
+        (dict(event) for event in events),
+        key=lambda item: (float(item.get("start") or 0), str(item.get("event_id") or "")),
+    )
+
+    def span_of(event: Mapping[str, Any]) -> tuple[str, int, int]:
+        return (
+            str(event.get("source_segment_index")),
+            round(float(event.get("start") or 0) * 1000),
+            round(float(event.get("end") or 0) * 1000),
+        )
+
+    text_labels: dict[tuple[str, int, int], set[str]] = {}
+    for event in ordered:
+        if str(event.get("type") or "") != "text_emphasis":
+            continue
+        label = re.sub(r"\s+", "", str(event.get("text") or ""))
+        if label:
+            text_labels.setdefault(span_of(event), set()).add(label)
+
+    # One spoken sentence gets one materialised keyword accent.  Splitting a
+    # sentence into two short cues used to paint a second, narrower label a few
+    # seconds later (``工厂品牌产品`` then ``公司``), which reads as leftover
+    # residue rather than a new point.
+    best_keyword_per_segment: dict[str, float] = {}
+    for event in ordered:
+        if str(event.get("type") or "") != "keyword_emphasis":
+            continue
+        if text_labels.get(span_of(event)):
+            continue
+        segment = str(event.get("source_segment_index"))
+        term = re.sub(r"\s+", "", str(event.get("semantic_text") or ""))
+        if len(term) > best_keyword_per_segment.get(segment, 0.0):
+            best_keyword_per_segment[segment] = float(len(term))
+
+    kept: list[dict[str, Any]] = []
+    merged: list[dict[str, Any]] = []
+    for event in ordered:
+        if str(event.get("type") or "") == "keyword_emphasis":
+            term = re.sub(r"\s+", "", str(event.get("semantic_text") or ""))
+            labels = text_labels.get(span_of(event)) or set()
+            if labels:
+                # Same beat already carries a standalone grounded text block.
+                # Keep the caption accent, drop the second visual layer.
+                caption_event = {
+                    **event,
+                    "render_policy": "caption_only",
+                    "demoted_reason": "caption_text_emphasis_carries_the_same_beat",
+                }
+                merged.append(caption_event)
+                kept.append(caption_event)
+                continue
+            segment = str(event.get("source_segment_index"))
+            if len(term) < best_keyword_per_segment.get(segment, 0.0):
+                # A narrower label for a sentence that already has a stronger
+                # one.  Keep the caption accent, retire the extra layer.
+                caption_event = {
+                    **event,
+                    "render_policy": "caption_only",
+                    "demoted_reason": "segment_already_has_a_stronger_keyword_accent",
+                }
+                merged.append(caption_event)
+                kept.append(caption_event)
+                continue
+        kept.append(event)
+
+    # A single beat may still arrive with two overlapping keyword candidates
+    # (``业务员个人`` and ``业务员``).  Only one of them can carry the accent;
+    # keep the most specific phrase and merge the rest away.
+    chosen_per_span: dict[tuple[str, int, int], dict[str, Any]] = {}
+    for event in kept:
+        if str(event.get("type") or "") != "keyword_emphasis":
+            continue
+        key = span_of(event)
+        term = re.sub(r"\s+", "", str(event.get("semantic_text") or ""))
+        current = chosen_per_span.get(key)
+        if current is None:
+            chosen_per_span[key] = event
+            continue
+        current_term = re.sub(r"\s+", "", str(current.get("semantic_text") or ""))
+        if len(term) > len(current_term):
+            merged.append(
+                {
+                    **current,
+                    "dropped_reason": "same_span_keyword_superseded_by_more_specific_phrase",
+                }
+            )
+            chosen_per_span[key] = event
+        else:
+            merged.append(
+                {
+                    **event,
+                    "dropped_reason": "same_span_keyword_subsumed_by_more_specific_phrase",
+                }
+            )
+
+    resolved: list[dict[str, Any]] = []
+    for event in kept:
+        if str(event.get("type") or "") == "keyword_emphasis":
+            key = span_of(event)
+            if chosen_per_span.get(key) is not event:
+                continue
+        resolved.append(event)
+    resolved.sort(
+        key=lambda item: (float(item.get("start") or 0), str(item.get("event_id") or ""))
+    )
+    return resolved, merged
+
+
 def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Map semantic roles to legal local treatments, never to external assets."""
 
+    global _LAST_DROPPED_EMPHASIS
     events: list[dict[str, Any]] = []
     high_count = 0
     text_emphasis_count = 0
@@ -759,8 +906,12 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
                 source_text, semantic_text
             )
         # LOW_INFORMATION segments may still contribute one grounded noun or
-        # action, but never promote the whole sentence as a fake keyword.
-        if not keyword_candidates:
+        # action, but never promote the whole sentence as a fake keyword.  A
+        # decision-bearing role must not lose its camera/symbol/text beat just
+        # because the lexical field came back empty: ``大多数人都办了`` yields no
+        # candidate (``大多数`` is tagged as a numeral), yet it is still a
+        # conclusion the viewer should see land.
+        if not keyword_candidates and role in {"LOW_INFORMATION", "TRANSITION", ""}:
             continue
         keyword_limit = 2 if role in {
             "PRICE", "PERCENT", "NUMBER", "KEY_CLAIM", "WARNING", "NEGATIVE",
@@ -813,7 +964,13 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
         if role in {"NEGATIVE", "WARNING"} and not positive_degree and any(term in source_text for term in _NEGATIVE + _WARNING):
             symbol, reason = ("red_x", "明确否定或风险语义") if role == "NEGATIVE" else ("warning", "明确警告语义")
         elif role == "CONCLUSION" and not positive_degree:
-            symbol, reason = "green_check", "明确正向或结论语义"
+            if _conclusion_is_negative(source_text):
+                # A conclusion marker over a bad outcome must not be stamped
+                # with a success mark; that would assert the reverse of the
+                # spoken sentence.
+                symbol, reason = None, None
+            else:
+                symbol, reason = "green_check", "明确正向或结论语义"
         elif role == "QUESTION":
             symbol, reason = "question", "明确疑问语义"
         # Strong numeric meaning may receive a few asymmetric burst lines.
@@ -889,7 +1046,21 @@ def build_grammar_style_events(annotations: Sequence[Mapping[str, Any]]) -> list
                     event["disabled_by_breathing_rule"] = True
         else:
             streak = 0
-    return [event for event in ordered if not event.get("disabled_by_breathing_rule")]
+    breathing_kept = [
+        event for event in ordered if not event.get("disabled_by_breathing_rule")
+    ]
+    # Final single-collection constraint: the caption keeps the grounded
+    # phrase, and nothing re-prints that phrase as a second visual block.
+    kept, dropped = _drop_redundant_emphasis_events(breathing_kept)
+    _LAST_DROPPED_EMPHASIS = dropped
+    return kept
+
+
+# Audit trail for the most recent ``build_grammar_style_events`` call.  Kept
+# module-level (rather than widening the public return type) so every existing
+# caller keeps its list contract while the timeline can still explain why a
+# beat lost its duplicate.
+_LAST_DROPPED_EMPHASIS: list[dict[str, Any]] = []
 
 
 def build_grammar_only_timeline(
@@ -922,6 +1093,9 @@ def build_grammar_only_timeline(
         "brolls": [], "pip": [], "external_image": [], "network_assets": [],
         "visual_intensity_max": max((int(event.get("visual_intensity") or 0) for event in events), default=0),
         "external_visuals": False,
+        # Why a beat was merged away, so a QC pass can audit the constraint
+        # instead of silently trusting that nothing was dropped.
+        "merged_emphasis_events": [dict(item) for item in _LAST_DROPPED_EMPHASIS],
     }
 
 

@@ -1,0 +1,20 @@
+{
+  "asset_id": "sfx-kenney-interface-toggle_004",
+  "kind": "sound_effect",
+  "name": "kenney-interface-toggle_004",
+  "stored_name": "sfx-kenney-toggle_004.wav",
+  "media_type": "audio/wav",
+  "source_provider": "Kenney",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_cc0_asset",
+  "rights_holder": "Kenney",
+  "authorization_status": "confirmed",
+  "rights_status": "cc0_public_domain",
+  "publish_licensed": true,
+  "license_name": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "source_url": "https://kenney.nl/assets/interface-sounds",
+  "sha256": "060cee99131660931f019dd7de454abed1ba23655e37c32904ee5e590c2402d2",
+  "duration_seconds": 0.0633,
+  "suggested_category": "toggle"
+}

@@ -103,6 +103,27 @@ def test_batch_persists_requested_style_preset_on_run_snapshot(tmp_path):
     assert run.config["style_preset_id"] == "talking-head-brand-emphasis-v1"
 
 
+def test_batch_defaults_to_semantic_adaptive_style(tmp_path):
+    repository = MockRepository()
+    pipeline_service = PipelineService(repository, None, None, None, None)
+    service = ProductionService(repository, tmp_path / "production")
+    profile = service.create_profile(name="默认智能剪辑")
+
+    batch = service.create_batch(
+        name="默认风格批次",
+        profile_id=profile.profile_id,
+        source_items=[{"source_type": "script", "source_value": "一段测试口播稿"}],
+        pipeline_service=pipeline_service,
+    )
+    run = repository.get_pipeline_run(batch.items[0].run_id)
+
+    assert batch.execution_config["style_preset_id"] == (
+        "talking-head-semantic-adaptive-v1"
+    )
+    assert run is not None
+    assert run.config["style_preset_id"] == "talking-head-semantic-adaptive-v1"
+
+
 def test_sync_batch_does_not_rewrite_timestamp_when_state_is_unchanged(tmp_path):
     repository = MockRepository()
     candidate = _candidate("candidate-sync-noop")

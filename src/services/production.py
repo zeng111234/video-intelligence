@@ -35,7 +35,7 @@ from src.services.publish_metadata import (
     suggested_publish_draft,
     validated_publish_draft,
 )
-from src.services.style_presets import PRESET_GRAMMAR_ONLY, list_preset_ids
+from src.services.style_presets import PRESET_SEMANTIC_ADAPTIVE, list_preset_ids
 
 DEFAULT_PRODUCTION_TEMPLATE_ID = "short_video_optimize"
 BUNDLED_DEFAULT_PROFILE_NAME = "大树1"
@@ -329,7 +329,7 @@ class ProductionService:
         name: str,
         profile_id: str,
         pipeline_service,
-        style_preset_id: str = PRESET_GRAMMAR_ONLY,
+        style_preset_id: str = PRESET_SEMANTIC_ADAPTIVE,
         candidate_ids: list[str] | None = None,
         source_items: list[dict[str, Any]] | None = None,
         idempotency_key: str = "",
@@ -345,7 +345,7 @@ class ProductionService:
             raise ValueError("请至少添加一条候选、链接、选题或完整文案。")
         if len(normalized_sources) > 400:
             raise ValueError("单个批次最多包含 400 条内容。")
-        style_preset_id = str(style_preset_id or PRESET_GRAMMAR_ONLY).strip()
+        style_preset_id = str(style_preset_id or PRESET_SEMANTIC_ADAPTIVE).strip()
         if style_preset_id not in set(list_preset_ids()):
             raise ValueError(f"不支持的剪辑风格：{style_preset_id}")
         getter = getattr(self.repository, "get_candidate", None)
@@ -1300,7 +1300,7 @@ class ProductionService:
                     "batch_id": batch.batch_id,
                     "style_preset_id": str(
                         execution_config.get("style_preset_id")
-                        or PRESET_GRAMMAR_ONLY
+                        or PRESET_SEMANTIC_ADAPTIVE
                     ),
                     "profile": item_profile,
                     "rights_holder": execution_config["rights_holder"],

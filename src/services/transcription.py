@@ -1358,11 +1358,26 @@ class TranscriptionService:
                     }
                 )
             )
+        # Confidence only catches a model that is unsure.  A model that
+        # confidently mis-hears a standard number or a proper noun never enters
+        # the branch above, so run a local structural and lexicon check over
+        # every segment and flag what a human should confirm.  These findings
+        # never rewrite the text; they raise ``needs_review`` with a reason.
+        try:
+            from src.services.asr_lexicon import apply_review_findings
+
+            lexicon_flagged, lexicon_findings = apply_review_findings(reviewed)
+        except (ImportError, TypeError, ValueError):
+            lexicon_flagged, lexicon_findings = 0, []
+        if lexicon_flagged:
+            uncertain_segment_count += lexicon_flagged
         return reviewed, {
             "auto_reviewed": True,
             "uncertain_segment_count": uncertain_segment_count,
             "secondary_asr_count": secondary_asr_count,
             "llm_review_count": llm_review_count,
+            "lexicon_review_count": lexicon_flagged,
+            "lexicon_findings": lexicon_findings[:40],
             "auto_review_error": review_error,
         }
 
