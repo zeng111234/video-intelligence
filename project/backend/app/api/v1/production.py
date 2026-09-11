@@ -15,7 +15,9 @@ from project.backend.app.core.deps import (
 from src.services.production import (
     DEFAULT_PRODUCTION_TEMPLATE_ID,
     IdempotencyConflictError,
+    normalize_display_title,
 )
+from src.services.style_presets import PRESET_SEMANTIC_ADAPTIVE
 from src.services.transcription import TranscriptionError
 
 router = APIRouter(prefix="/api/v1/production", tags=["production"])
@@ -29,6 +31,7 @@ class ProfileCreateRequest(BaseModel):
     script_style: str = Field("", max_length=500)
     avatar_id: str | None = None
     voice_id: str | None = None
+    speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
     edit_template_id: str | None = DEFAULT_PRODUCTION_TEMPLATE_ID
     tags: list[str] = Field(default_factory=list, max_length=20)
 
@@ -36,6 +39,13 @@ class ProfileCreateRequest(BaseModel):
 class BatchCreateRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     profile_id: str = Field(..., min_length=1)
+    style_preset_id: Literal[
+        "talking-head-pure-adaptive-v1",
+        "talking-head-brand-emphasis-v1",
+        "talking-head-semantic-adaptive-v1",
+        "talking-head-local-grammar-v2",
+        "talking-head-grammar-only-v1",
+    ] = PRESET_SEMANTIC_ADAPTIVE
     candidate_ids: list[str] = Field(default_factory=list, max_length=400)
     items: list["BatchSourceItem"] = Field(default_factory=list, max_length=400)
 
@@ -43,7 +53,8 @@ class BatchCreateRequest(BaseModel):
 class BatchSourceItem(BaseModel):
     source_type: str = Field(..., pattern="^(candidate|share_link|brief|script)$")
     source_value: str = Field(..., min_length=1, max_length=5000)
-    display_title: str = Field("", max_length=120)
+    # 这是展示名，不应因超长而阻止任务创建；真正来源仍由 source_value 保留。
+    display_title: str = Field("", max_length=5000)
     candidate_role: Literal["primary", "reserve"] = "primary"
     profile_overrides: dict[str, str] = Field(default_factory=dict)
 
@@ -65,6 +76,14 @@ class BatchExecutionRequest(BaseModel):
     max_total_cost_cny: float | None = Field(default=None, ge=0)
     paid_actions_confirmed: bool = False
     automation_mode: Literal["manual", "auto"] = "manual"
+
+
+class BatchProfileChangeRequest(BaseModel):
+    profile_id: str = Field(..., min_length=1)
+
+
+class BatchSpeechRateChangeRequest(BaseModel):
+    speech_rate: float = Field(..., ge=0.8, le=1.2)
 
 
 class WorkspaceConfigurationRequest(BaseModel):
@@ -122,6 +141,8 @@ class BatchReviewItem(BaseModel):
     run_id: str = Field(..., min_length=1)
     approved_text: str = Field("", max_length=10000)
     note: str = Field("", max_length=500)
+    skill_prompt: str = Field("", max_length=8000, description="客户提供的 Skill 写作规则")
+    target_length: int | None = Field(None, ge=50, le=800, description="AI 改写目标字数")
     creative_plan: CreativePlanRequest | None = None
     publish_draft: PublishDraftRequest | None = None
 
@@ -241,6 +262,36 @@ def get_batch_workspace(batch_id: str, service=Depends(get_production_service)):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
+@router.put("/batches/{batch_id}/profile")
+def change_batch_profile(
+    batch_id: str,
+    body: BatchProfileChangeRequest,
+    service=Depends(get_production_service),
+):
+    try:
+        return _batch_response(
+            service.change_batch_profile(batch_id, profile_id=body.profile_id),
+            service,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/batches/{batch_id}/speech-rate")
+def change_batch_speech_rate(
+    batch_id: str,
+    body: BatchSpeechRateChangeRequest,
+    service=Depends(get_production_service),
+):
+    try:
+        return _batch_response(
+            service.change_batch_speech_rate(batch_id, speech_rate=body.speech_rate),
+            service,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/batches", status_code=201)
 def create_batch(
     body: BatchCreateRequest,
@@ -248,13 +299,23 @@ def create_batch(
     service=Depends(get_production_service),
     pipeline_service=Depends(get_pipeline_service),
 ):
-    request_hash = service.request_hash(body.model_dump(mode="json"))
+    source_items = [
+        {
+            **item.model_dump(),
+            "display_title": normalize_display_title(item.display_title),
+        }
+        for item in body.items
+    ]
+    request_payload = body.model_dump(mode="json")
+    request_payload["items"] = source_items
+    request_hash = service.request_hash(request_payload)
     try:
         batch = service.create_batch(
             name=body.name,
             profile_id=body.profile_id,
+            style_preset_id=body.style_preset_id,
             candidate_ids=body.candidate_ids,
-            source_items=[item.model_dump() for item in body.items],
+            source_items=source_items,
             pipeline_service=pipeline_service,
             idempotency_key=idempotency_key,
             request_hash=request_hash,
@@ -297,6 +358,9 @@ def review_batch_items(
                     run_id=item.run_id,
                     reviewer=body.reviewer,
                     note=item.note,
+                    rewrite_request=item.note,
+                    skill_prompt=item.skill_prompt,
+                    target_length=item.target_length,
                     approved_text=item.approved_text,
                 )
                 entered_script_review = (

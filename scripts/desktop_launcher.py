@@ -184,6 +184,7 @@ def _configure_desktop_environment(
         "VIDEOINSIGHT_CONTROL_PLANE_URL": str(control_plane["control_plane_url"]),
         "VIDEOINSIGHT_WORKER_TOKEN": secrets.token_urlsafe(32),
         "VIDEOINSIGHT_RUNTIME_ROOT": str(runtime_root),
+        "AUTH_SESSION_STORE": "sqlite",
         "VIDEOINSIGHT_FRONTEND_DIST": str(root / "project" / "frontend" / "dist"),
         "VIDEOINSIGHT_BACKEND_ORIGIN": f"http://127.0.0.1:{port or DESKTOP_PORT}",
         "ASR_MODE": "sandbox",

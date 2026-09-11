@@ -293,6 +293,34 @@ class TestCopywritingServiceEdgeCases:
         assert len(engine.rewrite_calls) == 2
         assert any("已自动重写" in note for note in task.compliance_notes)
 
+    def test_rewrite_persists_and_forwards_customer_skill_and_target_length(self):
+        engine = _ComplianceRetryEngine()
+        task = CopywritingService(self.repo, engine).rewrite(
+            source_text="分享经验",
+            skill_prompt="先讲结论，再给三个步骤；语气像老板聊天。",
+            target_length=150,
+        )
+
+        assert task.skill_prompt == "先讲结论，再给三个步骤；语气像老板聊天。"
+        assert task.target_length == 150
+        assert engine.rewrite_calls[0]["style_prompt"] == ""
+        assert engine.rewrite_calls[0]["skill_prompt"] == task.skill_prompt
+
+    def test_generate_retries_when_model_ignores_target_length(self):
+        engine = _OverlongVoiceoverEngine()
+
+        task = CopywritingService(self.repo, engine).generate(
+            content_brief="一段需要生成口播的内容。",
+            target_length=50,
+        )
+
+        assert task.status == TaskStatus.SUCCEEDED
+        assert len(engine.rewrite_calls) == 2
+        assert engine.rewrite_calls[0]["skill_prompt"] == ""
+        assert CopywritingService._spoken_character_count(task.result_text or "") <= 50
+        assert task.result_text == "开头钩子。核心事实。结尾行动句。"
+        assert any("二次语义压缩达到目标字数" in note for note in task.compliance_notes)
+
     def test_rewrite_uses_final_version_after_three_risk_attempts(self):
         engine = _ComplianceRetryEngine(remains_risky=True)
         task = CopywritingService(self.repo, engine).rewrite(source_text="分享经验")

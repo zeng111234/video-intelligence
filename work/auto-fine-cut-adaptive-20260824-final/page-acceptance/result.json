@@ -1,9 +1,0 @@
-{
-  "url": "http://127.0.0.1:1001/video-editor",
-  "videoCount": 1,
-  "src": "/api/v1/video-editor/jobs/edit-local-4ae0005eca/media",
-  "mediaStatus": 401,
-  "videoDuration": 31.5,
-  "downloadBytes": 10551558,
-  "downloadPath": "work/auto-fine-cut-adaptive-20260824-final/page-acceptance/edit-local-4ae0005eca.mp4"
-}

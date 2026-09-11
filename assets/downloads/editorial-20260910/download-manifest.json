@@ -1,0 +1,461 @@
+[
+  {
+    "file": "kenney-interface.zip",
+    "url": "https://opengameart.org/sites/default/files/kenney_interfaceSounds.zip",
+    "status": "downloaded",
+    "bytes": 834536,
+    "sha256": "f2193d072726d6758a5f7871b2dcc54dcce0d5c35c6f0a62f92549b327c81232",
+    "license": "CC0-1.0",
+    "review_status": "not_auditioned"
+  },
+  {
+    "file": "kenney-ui.zip",
+    "url": "https://kenney.nl/media/pages/assets/ui-audio/490d233f68-1677590494/kenney_ui-audio.zip",
+    "status": "downloaded",
+    "bytes": 411949,
+    "sha256": "946fc23a63d535d693eb31b2eabb80c8c28d6351e2186b344ceb71b2cb1d5eb6",
+    "license": "CC0-1.0",
+    "review_status": "not_auditioned"
+  },
+  {
+    "file": "openmoji-LICENSE.txt",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/LICENSE.txt",
+    "status": "downloaded",
+    "bytes": 20137,
+    "sha256": "5e436ff8ffbb77d8607220e9bce20c8915d860010feeb6c1ebef5a85688e9b39",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/confirm.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/2705.svg",
+    "status": "downloaded",
+    "bytes": 1473,
+    "sha256": "35aeed71b9dcd2ad35a481468916ed10ae12192a64986d59843675bbbb8832ad",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/cancel.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/274C.svg",
+    "status": "downloaded",
+    "bytes": 632,
+    "sha256": "cd6865688e39dfd6472d412ed9ad58903d655eaf385a55ed47897d49f24969f1",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/warning.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/26A0.svg",
+    "status": "downloaded",
+    "bytes": 1986,
+    "sha256": "5a25f88ebe8defcd245cbf31728b6480c48e3b8b869cbfc8027fab4edffdcea0",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/question.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/2753.svg",
+    "status": "downloaded",
+    "bytes": 1950,
+    "sha256": "6685c94f4fb135cc368e6aafb9afd152143995a74316ef58283dfe252a1309eb",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/attention.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/2757.svg",
+    "status": "downloaded",
+    "bytes": 1090,
+    "sha256": "6fd8b413d08306e2f57e6e641b43763350e8dfc27b5b4b98f8e0f0a59367509c",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/idea.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4A1.svg",
+    "status": "downloaded",
+    "bytes": 2016,
+    "sha256": "fb98f3985e05ab294e1ca1beee18d5c557d1572b316756a9abd00d8901807b43",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/money-bag.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4B0.svg",
+    "status": "downloaded",
+    "bytes": 5923,
+    "sha256": "b1933d84c6e1fb8018e74ba28c31c375eeb54c2c72a0b4b5b3b7f04843293b9f",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/banknotes.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4B5.svg",
+    "status": "downloaded",
+    "bytes": 3528,
+    "sha256": "e78ef793a7acea1241d53017c828db74f14c7bf207a9067dd75021a5c4825e4c",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/payment-card.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4B3.svg",
+    "status": "downloaded",
+    "bytes": 1754,
+    "sha256": "d5e80563ff16601b7111bfca8d6459f7229b7cde0c424fe7e4401a76e3d56ee1",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/gift.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F381.svg",
+    "status": "downloaded",
+    "bytes": 3138,
+    "sha256": "3153933c75f6195a64d67041ecd76b7ec7f391fd7bf2552709d6b6cf59dbe2dd",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/label.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F3F7.svg",
+    "status": "downloaded",
+    "bytes": 584,
+    "sha256": "4034024eb5389ae0950fcabb5613fa6a43355c6637d5711999b8da4486e5d727",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/location.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4CD.svg",
+    "status": "downloaded",
+    "bytes": 1384,
+    "sha256": "a24f24e9b06e25591de0a42a37b4b0794c8d50f4c34ca6adaac7092ff6dfc5a2",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/store.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F3EA.svg",
+    "status": "downloaded",
+    "bytes": 2364,
+    "sha256": "932ca00c21d474f319ae2594b0abda4c6e171a500f41605bc94dac7904da76bc",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/factory.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F3ED.svg",
+    "status": "downloaded",
+    "bytes": 4560,
+    "sha256": "857ea4d16c5d65155b787391a371cf3b4456f8c2222e04c677bf2c39b677c76a",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/package.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4E6.svg",
+    "status": "downloaded",
+    "bytes": 3446,
+    "sha256": "39a2b6ed185c127b0f100397bd95ceaf6a0c12233c0533a0c43916be384fcf52",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/shopping-cart.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F6D2.svg",
+    "status": "downloaded",
+    "bytes": 8300,
+    "sha256": "f64187ebf000bbc6dd2d6b9b1b850eb6b62fc77d09ce4cbdcdcdb38cd758c3aa",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/customers.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F465.svg",
+    "status": "downloaded",
+    "bytes": 1521,
+    "sha256": "2148623d40ef1fca2f55277560a7c8539662af7114861343dfee51768f6b77be",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/handshake.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F91D.svg",
+    "status": "downloaded",
+    "bytes": 3780,
+    "sha256": "31129922ab2e818422c51788036731ab8fb311aacf40fe04edb9e7f69bf9ee7a",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/phone.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4F1.svg",
+    "status": "downloaded",
+    "bytes": 1765,
+    "sha256": "a69cdc48cf92ad4d52a58847393a2403c469673d2738fd88de01273817a6f9ab",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/laptop.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4BB.svg",
+    "status": "downloaded",
+    "bytes": 1252,
+    "sha256": "094d35c49f6ad72e69f7ba2d8301ed204cc575862003e9982ac99d99f9c0396d",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/chart.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4CA.svg",
+    "status": "downloaded",
+    "bytes": 2462,
+    "sha256": "ffa35865faf9748297c15cd048b1d5b25de8dde30a541094c5dc99d71043c389",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/growth.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4C8.svg",
+    "status": "downloaded",
+    "bytes": 3107,
+    "sha256": "e5dcc84cab48509aefd6c0ac830fff3189832cb9a2710bd5f0abfc362d5e4893",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/decline.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4C9.svg",
+    "status": "downloaded",
+    "bytes": 3122,
+    "sha256": "bf90083f7ddddb45bdff84e14a6439b7ff682782608ff43048c82a96a1e750d5",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/clipboard.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4CB.svg",
+    "status": "downloaded",
+    "bytes": 3405,
+    "sha256": "5af3f09c5e65bc99be4b8b5846225368e0685135ace40bbe3971c9c120fe4960",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/calendar.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4C5.svg",
+    "status": "downloaded",
+    "bytes": 2752,
+    "sha256": "ea09b06a917f3d813cf3a9aee3f5d3e922899a74930e52e64bddb51360b23160",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/alarm.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/23F0.svg",
+    "status": "downloaded",
+    "bytes": 2824,
+    "sha256": "36392b6153d538e37c0022c22da10ab218754d1839955e88a107b766be6fe734",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/hourglass.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/23F3.svg",
+    "status": "downloaded",
+    "bytes": 3141,
+    "sha256": "e5104a57675dab5aee5bffc1b2f63a75d542f312efecd74982db892c7d4e6dd4",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/lock.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F512.svg",
+    "status": "downloaded",
+    "bytes": 1528,
+    "sha256": "32cef5a4ec414512b909302b4d93520575bbeda2e249ec2f2a0855c295bfefb2",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/key.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F511.svg",
+    "status": "downloaded",
+    "bytes": 1741,
+    "sha256": "950ab0db97d2b474167dfbfb3af35a66fe7c34de071ed435168d35db3cff16ac",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/announcement.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4E2.svg",
+    "status": "downloaded",
+    "bytes": 1479,
+    "sha256": "3cb3f8a199739bc975c647e50f0a854719cb01da9c9d55ed9f242cf68d9306c7",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/bell.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F514.svg",
+    "status": "downloaded",
+    "bytes": 1371,
+    "sha256": "82ac2660a6f26e68c0bd85cab013cd1159d325c25cb6d1ff8598e0418872b7bc",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/target.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F3AF.svg",
+    "status": "downloaded",
+    "bytes": 2879,
+    "sha256": "dda0ccf93e7ffb4a513cd8ffc056066a5650470fa4b55a5770b7ebbb7eb5baf6",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/rocket.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F680.svg",
+    "status": "downloaded",
+    "bytes": 4498,
+    "sha256": "2403e0a305f931cf8c2ebd1a06de994c08733d0554eda8c0e52d1b8fe1be7001",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/fire.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F525.svg",
+    "status": "downloaded",
+    "bytes": 3130,
+    "sha256": "c9d2cc9cedfa557ff34c859b8af6556436913ec0c73a65a6533676698c3edcf0",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/star.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/2B50.svg",
+    "status": "downloaded",
+    "bytes": 693,
+    "sha256": "0927c3818e30711a17aa2a14b6b7383f4aab767c865d8f88ad491e91b0de49f0",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/sparkles.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/2728.svg",
+    "status": "downloaded",
+    "bytes": 4695,
+    "sha256": "76228cbcc43f550920f5913a32efd87356abb454c904f272d13bc0f317228cbd",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/thumbs-up.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F44D.svg",
+    "status": "downloaded",
+    "bytes": 2473,
+    "sha256": "3465b051877d87db1f971214f2f609327c74178cb4285f44a46ab97784017915",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/thumbs-down.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F44E.svg",
+    "status": "downloaded",
+    "bytes": 2474,
+    "sha256": "39a9210d6ef4002b949b8d08458221241a136eead7a0e309e84addebf3503bc4",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/celebration.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F389.svg",
+    "status": "downloaded",
+    "bytes": 2725,
+    "sha256": "8d3aa4064d03573fcae49e6d06a18b5befead4f129911cd4662be57cfafcf074",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/chat.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4AC.svg",
+    "status": "downloaded",
+    "bytes": 1199,
+    "sha256": "4c27a874ea4eb7d11ae09b2c082d2708c8c027e1f7e666b570eb17436fa9ac19",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/telephone.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4DE.svg",
+    "status": "downloaded",
+    "bytes": 1324,
+    "sha256": "6fbc0d46f0429759beb4dc7c592691b83465f11ff0923d4b3aa0fc6aaeb0d86f",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/email.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4E7.svg",
+    "status": "downloaded",
+    "bytes": 3411,
+    "sha256": "7b1982a713538869a2b8422155b9d2a7c2fb2d8900c3c467d2dc39eaeb860644",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/folder.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4C1.svg",
+    "status": "downloaded",
+    "bytes": 1520,
+    "sha256": "dcf60816cfc6c22da70dbb2d27cad84bd5e80b7fefb2177e8621cf4fd0f9c0ef",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/memo.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F4DD.svg",
+    "status": "downloaded",
+    "bytes": 2628,
+    "sha256": "a5abbf3510114c62e2544c689a35efe8bf1c3e1fa9914df0db3a598385eb7006",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/link.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F517.svg",
+    "status": "downloaded",
+    "bytes": 2024,
+    "sha256": "80ee4d83227a8aa2b7f4f0efb2c3fad0c11bf231f1e8c0206364650b27239574",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/search.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F50D.svg",
+    "status": "downloaded",
+    "bytes": 2085,
+    "sha256": "2acd94760e04fe08acfa605545881915cce8d77b54eb77de1561e6f5f773cffa",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/repeat.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/1F504.svg",
+    "status": "downloaded",
+    "bytes": 2270,
+    "sha256": "cbfed47f4825d54e3f6615bec724d9fa6eef90bdd73d96c1a1c0b53188b8c071",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  },
+  {
+    "file": "stickers/right-arrow.svg",
+    "url": "https://raw.githubusercontent.com/hfg-gmuend/openmoji/master/color/svg/27A1.svg",
+    "status": "downloaded",
+    "bytes": 718,
+    "sha256": "7f3bb7ebf25e1a81a4ca54d11ba550c2dea37d3507eb6c00526255ddad892e9f",
+    "license": "CC-BY-SA-4.0",
+    "review_status": "not_visually_reviewed"
+  }
+]

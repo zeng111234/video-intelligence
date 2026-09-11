@@ -287,7 +287,7 @@ def test_broll_review_forces_local_renderer_instead_of_dropping_overlay(
     assert reviewed_item["publish_allowed"] is False
 
 
-def test_cloud_flow_automatically_selects_bgm_from_transcript_and_title(tmp_path: Path):
+def test_cloud_flow_keeps_bgm_opt_in_by_default(tmp_path: Path):
     service = _service(tmp_path)
     service._probe_bgm_duration = lambda _path: 120.0  # type: ignore[method-assign]
     bgm = service.upload_bgm(
@@ -304,11 +304,10 @@ def test_cloud_flow_automatically_selects_bgm_from_transcript_and_title(tmp_path
     created = _create(service, source_id, quote, key="cloud-auto-bgm")
     item = created["items"][0]
 
-    assert created["bgm_enabled"] is True
-    assert item["selected_bgm_id"] == bgm["asset_id"]
-    assert "bgm" in item["edit_plan"]["enabled_steps"]
-    assert "AI 阅读转写文案与标题" in item["bgm_reason"]
-    assert "《Tech-Voiceover》" in item["bgm_reason"]
+    assert created["bgm_enabled"] is False
+    assert item["selected_bgm_id"] is None
+    assert "bgm" not in item["edit_plan"]["enabled_steps"]
+    assert item["bgm_reason"]
 
 
 def test_sqlite_restores_quotes_operations_jobs_and_batch(tmp_path: Path):

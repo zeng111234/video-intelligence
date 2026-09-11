@@ -220,6 +220,7 @@ export interface ProductionProfile {
   script_style: string;
   avatar_id: string | null;
   voice_id: string | null;
+  speech_rate: number;
   edit_template_id: string | null;
   tags: string[];
   created_at: string;
@@ -1176,6 +1177,7 @@ export interface CopywritingDetailResponse extends CopywritingSummaryResponse {
   selling_points: string;
   call_to_action: string;
   style_prompt: string;
+  skill_prompt: string;
 }
 
 export interface CopywritingCapabilitiesResponse {
@@ -1203,6 +1205,8 @@ export interface CopywritingGenerateRequest {
   selling_points?: string;
   call_to_action?: string;
   style_prompt?: string;
+  skill_prompt?: string;
+  target_length?: number;
   tone?: string;
   variant_count?: number;
 }
@@ -1211,6 +1215,8 @@ export interface CopywritingRewriteRequest {
   source_text: string;
   target_audience?: string;
   style_prompt?: string;
+  skill_prompt?: string;
+  target_length?: number;
   tone?: string;
   variant_count?: number;
 }
@@ -1815,6 +1821,10 @@ export interface VideoEditorDirectorPlan {
     style_id: string;
     semantic_kind: string;
     semantic_text: string;
+    visual_verb?: "reveal" | "compare" | "accumulate" | "flow" | "impact" | "resolve" | "warning" | string;
+    visual_language?: string;
+    visual_action?: string;
+    visual_variant?: number;
     fact?: string;
     anchor?: string;
     presentation?: string;
@@ -1860,6 +1870,45 @@ export interface VideoEditorDirectorPlan {
   timeline_duration_seconds?: number;
   source_duration_seconds?: number;
   vector_track?: VideoEditorVectorTrack | null;
+  semantic_director?: {
+    provider?: string | null;
+    model?: string | null;
+    status?: string | null;
+    version?: string | null;
+    prompt_version?: string | null;
+    input_segment_count?: number;
+    provider_annotation_count?: number;
+    provider_coverage_ratio?: number;
+    keyframe_count?: number;
+    proposal_count?: number;
+    compiled_count?: number;
+    rejected_count?: number;
+    fallback_reason?: string | null;
+  } | null;
+  creative_director?: {
+    source?: string;
+    accepted_count?: number;
+    compiled_count?: number;
+    rejected_count?: number;
+    asset_requests?: Array<Record<string, unknown>>;
+    asset_events?: Array<Record<string, unknown>>;
+    review_applied_once?: boolean;
+  } | null;
+  creative_proposals?: Array<Record<string, unknown>>;
+  creative_proposal_rejections?: Array<Record<string, unknown>>;
+  director_preview_review?: {
+    status?: string;
+    verdict?: string;
+    required?: boolean;
+    passed?: boolean;
+    preview_rendered?: boolean;
+    preview_frame_count?: number;
+    applied_revision_count?: number;
+    reason?: string | null;
+  } | null;
+  director_cache_key?: string;
+  director_prompt_version?: string;
+  cache_upgrade_notice?: string;
 }
 
 export interface VideoEditorPreflightResponse extends VideoEditorCostQuote {
@@ -2283,25 +2332,6 @@ export interface CreditTransaction {
 export interface CreditBalanceResponse {
   balance: string;
   transactions: CreditTransaction[];
-}
-
-export interface CreditUsageGroup {
-  key: string;
-  name: string;
-  consumed: string;
-  transaction_count: number;
-}
-
-export interface AdminCreditUsageTransaction extends CreditTransaction {
-  owner: string;
-  customer_name: string;
-}
-
-export interface AdminCreditUsageResponse {
-  total_consumed: string;
-  by_project: CreditUsageGroup[];
-  by_customer: CreditUsageGroup[];
-  recent_transactions: AdminCreditUsageTransaction[];
 }
 
 export interface CreditAdjustRequest {

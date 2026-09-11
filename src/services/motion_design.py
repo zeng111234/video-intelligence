@@ -208,6 +208,27 @@ _STYLE_BY_KIND = {
     "keyword": "keyword_pop",
 }
 
+# Keep the legacy ``style_id`` values in persisted timelines for compatibility,
+# but give the renderer an abstraction that is independent of any one icon or
+# sticker.  This is the important distinction between semantic direction and
+# visual execution: the director chooses a visual verb, while the local style
+# engine chooses the actual line treatment.
+_VISUAL_VERB_BY_KIND = {
+    "number": "impact",
+    "price": "impact",
+    "data": "accumulate",
+    "benefit": "reveal",
+    "road": "flow",
+    "compare": "compare",
+    "knowledge": "reveal",
+    "process": "flow",
+    "warning": "warning",
+    "logic": "flow",
+    "result": "resolve",
+    "cta": "resolve",
+    "keyword": "reveal",
+}
+
 _SYMBOL_BY_KIND = {
     "number": "number_badge",
     "data": "highlight_box",
@@ -291,6 +312,13 @@ def build_semantic_motion_events(
                 "renderer": "procedural_overlay_v2_caption_integrated",
                 "style_id": style_id,
                 "semantic_kind": kind,
+                "visual_verb": _VISUAL_VERB_BY_KIND.get(kind, "reveal"),
+                "visual_language": "editorial_line_v1",
+                "visual_action": "caption_attached_punctuation",
+                "visual_variant": len(candidates) % 2,
+                # Generic keywords are already animated by the subtitle
+                # layer. Keep them out of the floating procedural icon layer.
+                "render_policy": "caption_only" if kind == "keyword" else "semantic_accent",
                 "semantic_text": payload[:14],
                 "fact": payload[:14] if kind == "number" else "",
                 "anchor": "smart_caption",

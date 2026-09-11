@@ -29,7 +29,15 @@ def list_tasks(
             title=t.title,
             status=t.status.value,
             progress=t.progress,
+            error_message=getattr(t, "error_message", None),
             created_at=t.created_at,
+            finished_at=getattr(t, "finished_at", None)
+            or (
+                t.updated_at
+                if getattr(t.status, "value", t.status)
+                in {"succeeded", "failed", "cancelled"}
+                else None
+            ),
         )
         for t in tasks
     ]
@@ -51,7 +59,15 @@ def get_task(
         title=task.title,
         status=task.status.value,
         progress=task.progress,
+        error_message=getattr(task, "error_message", None),
         created_at=task.created_at,
+        finished_at=getattr(task, "finished_at", None)
+        or (
+            task.updated_at
+            if getattr(task.status, "value", task.status)
+            in {"succeeded", "failed", "cancelled"}
+            else None
+        ),
     )
 
 

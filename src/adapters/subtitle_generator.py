@@ -94,8 +94,12 @@ class SubtitleGenerator:
 
         from faster_whisper import WhisperModel
 
+        from src.resources import _local_asr_model_path
+
         self._model = WhisperModel(
-            self.model_name,
+            # Reuse the installed snapshot instead of letting faster_whisper
+            # resolve the repository over a network that may be unreachable.
+            _local_asr_model_path(self.model_name) or self.model_name,
             device=self.device,
             compute_type=self.compute_type,
         )

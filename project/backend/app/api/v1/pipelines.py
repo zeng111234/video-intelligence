@@ -19,6 +19,7 @@ from project.backend.app.core.deps import (
     get_repository,
     get_template_service,
 )
+from project.backend.app.core.security import require_admin_token
 from project.backend.app.schemas.requests import PipelineCreateRequest
 from project.backend.app.schemas.responses import PipelineResponse
 from src.adapters.douyin_parser import DouyinParserError
@@ -60,6 +61,32 @@ class GuidedPipelineRequest(BaseModel):
     paid_fallback_confirmed: bool = False
 
 
+def _resolve_candidate_for_request(repository, candidate_id: str | None):
+    """Resolve both durable and provider-style candidate IDs.
+
+    Progressive crawler results may briefly expose a bare platform item ID.
+    Accept it at the production boundary as long as it maps to exactly one
+    saved candidate, keeping older browser state compatible with the durable
+    repository ID used by the production workflow.
+    """
+    requested_id = str(candidate_id or "").strip()
+    if not requested_id:
+        return None, requested_id
+    candidate = repository.get_candidate(requested_id)
+    if candidate is not None:
+        return candidate, requested_id
+    resolver = getattr(repository, "resolve_candidate_id", None)
+    if not callable(resolver):
+        return None, requested_id
+    for platform in Platform:
+        canonical_id = resolver(platform.value, requested_id)
+        if canonical_id:
+            resolved = repository.get_candidate(canonical_id)
+            if resolved is not None:
+                return resolved, canonical_id
+    return None, requested_id
+
+
 def _to_response(run) -> PipelineResponse:
     stages = [
         {
@@ -88,7 +115,11 @@ def _to_response(run) -> PipelineResponse:
         created_at=run.created_at,
         updated_at=run.updated_at,
         finished_at=run.finished_at,
-        result_media_url=(f"/api/v1/pipelines/{run.run_id}/media" if run.edit_task_id else None),
+        result_media_url=(
+            f"/api/v1/pipelines/{run.run_id}/media?v={run.edit_task_id}"
+            if run.edit_task_id
+            else None
+        ),
     )
 
 
@@ -133,7 +164,9 @@ def _guided_preflight(
         if not body.candidate_id:
             missing.append("请选择一条候选视频")
         else:
-            candidate = repository.get_candidate(body.candidate_id)
+            candidate, _canonical_id = _resolve_candidate_for_request(
+                repository, body.candidate_id
+            )
             if candidate is None:
                 missing.append("所选候选不存在")
             elif candidate.platform != Platform.DOUYIN:
@@ -253,7 +286,11 @@ def create_guided_pipeline(
         raise HTTPException(status_code=400, detail="；".join(preflight["missing"]))
     profile = production_service.get_profile(body.profile_id)
     assert profile is not None
-    candidate = repository.get_candidate(body.candidate_id) if body.candidate_id else None
+    candidate, canonical_candidate_id = _resolve_candidate_for_request(
+        repository, body.candidate_id
+    )
+    if candidate is not None and canonical_candidate_id != body.candidate_id:
+        body = body.model_copy(update={"candidate_id": canonical_candidate_id})
     keyword = candidate.title if candidate is not None else str(preflight["source"].get("share_url") or "抖音分享视频")
     run = service.start_guided_run(
         source_type=body.source_type,
@@ -421,7 +458,13 @@ def get_pipeline_media(
     path = Path(str(getattr(task, "result_path", "") or ""))
     if not path.is_file():
         raise HTTPException(status_code=404, detail="数字人口播成片尚未生成。")
-    return FileResponse(path, media_type="video/mp4", filename=path.name)
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=path.name,
+        content_disposition_type="inline",
+        headers={"Cache-Control": "private, no-cache"},
+    )
 
 
 @router.delete("/{run_id}")
@@ -436,9 +479,18 @@ def delete_pipeline(
 
 @router.delete("")
 def delete_all_pipelines(
+    _admin: str = Depends(require_admin_token),
     repo=Depends(get_repository),
+    confirmation: str | None = Header(default=None, alias="X-Confirm-Reset"),
 ):
-    """删除全部流水线记录；不会删除候选、素材或数字人成片。"""
+    """Hard reset every pipeline record.  Requires admin role + the
+    X-Confirm-Reset header so a stray script with an X-API-Key can never
+    mass-delete a customer's work."""
+    if confirmation != "yes-reset-all-pipelines":
+        raise HTTPException(
+            status_code=400,
+            detail="需要 X-Confirm-Reset: yes-reset-all-pipelines 头才允许全量重置。",
+        )
     return {"deleted_count": repo.delete_all_pipeline_runs()}
 
 

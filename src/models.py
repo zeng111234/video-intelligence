@@ -1162,6 +1162,7 @@ class TaskRecord(BaseModel):
     progress: int = Field(ge=0, le=100)
     created_at: datetime
     updated_at: datetime
+    finished_at: datetime | None = None
     elapsed_seconds: float | None = Field(default=None, ge=0)
     error_message: str | None = None
     retry_count: int = Field(default=0, ge=0, le=1)
@@ -1252,6 +1253,8 @@ class CopywritingTask(TaskRecord):
     selling_points: str = ""
     call_to_action: str = ""
     style_prompt: str = ""
+    # 客户可复用的蒸馏规则；与基础风格分开保存，便于历史任务恢复。
+    skill_prompt: str = ""
     target_length: int = Field(default=300, ge=50, le=2000)
     tone: str = "professional"
     rewrite_goal: str = ""
@@ -1574,6 +1577,8 @@ class ProductionProfile(BaseModel):
     script_style: str = Field(default="", max_length=500)
     avatar_id: str | None = None
     voice_id: str | None = None
+    # 每个出镜配置可有自己的语速；旧配置缺省为正常速度。
+    speech_rate: float = Field(default=1.0, ge=0.8, le=1.2)
     edit_template_id: str | None = None
     tags: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=lambda: datetime.now().astimezone())

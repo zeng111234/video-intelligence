@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from http.client import RemoteDisconnected
 import json
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from src.adapters.avatar import (
     AvatarProviderError,
     ShuyingLegacyAvatarProvider,
+    _default_transport,
     build_avatar_provider,
 )
 from src.models import (
@@ -14,6 +16,7 @@ from src.models import (
     AvatarAssetKind,
     AvatarProviderStatus,
     AvatarSubmitRequest,
+    ProviderErrorKind,
     ProviderMode,
 )
 
@@ -717,6 +720,83 @@ def test_cloned_voice_waits_as_a_resumable_job_before_submitting_video(tmp_path)
     assert pending.status == AvatarProviderStatus.RUNNING
     assert pending.job_id == "voice-tts:tts-task-101"
     assert pending.stage == "克隆声音合成中"
+    assert resumed.status == AvatarProviderStatus.QUEUED
+    assert resumed.job_id == "video-job-voice"
+    assert sum(url.endswith("/voice_2") for url in calls) == 1
+    assert sum(url.endswith("/video") for url in calls) == 1
+
+
+def test_default_transport_wraps_remote_disconnect_as_safe_provider_error(monkeypatch):
+    def disconnect(*args, **kwargs):
+        raise RemoteDisconnected("remote closed")
+
+    monkeypatch.setattr("src.adapters.avatar.urlopen", disconnect)
+
+    with pytest.raises(AvatarProviderError) as error:
+        _default_transport(
+            "POST",
+            "https://avatar-gateway.example.com/voice_tts_info",
+            {},
+            b"tts_task_id=tts-task-101",
+            1.0,
+        )
+
+    assert error.value.kind.value == "connection"
+    assert error.value.outcome_unknown is True
+    assert "远端中断" in str(error.value)
+
+
+def test_cloned_voice_query_disconnect_keeps_tts_task_resumable(tmp_path):
+    calls: list[str] = []
+    voice_status_calls = 0
+
+    def transport(method, url, headers, body, timeout):
+        nonlocal voice_status_calls
+        calls.append(url)
+        if url.endswith("/voice_2"):
+            return json.dumps({"code": 1, "data": "tts-task-disconnect"}).encode(), "application/json"
+        if url.endswith("/voice_tts_info"):
+            voice_status_calls += 1
+            if voice_status_calls == 1:
+                raise AvatarProviderError(
+                    "数字人服务连接被远端中断，请稍后重试。",
+                    kind=ProviderErrorKind.CONNECTION,
+                )
+            return json.dumps(
+                {
+                    "code": 1,
+                    "data": {"ossurl": "https://media.example.com/cloned-voice.mp3"},
+                }
+            ).encode(), "application/json"
+        if url.endswith("/video"):
+            return json.dumps(
+                {"code": 1, "data": {"videoId": "video-job-voice"}}
+            ).encode(), "application/json"
+        raise AssertionError(f"unexpected URL: {url}")
+
+    provider = _provider(
+        assets_manifest_path=str(tmp_path / "assets.json"),
+        audio_allowed_hosts="media.example.com",
+        transport=transport,
+    )
+    provider._upsert_custom_asset(
+        AvatarAsset(
+            asset_id="shuying-voice-7869",
+            kind=AvatarAssetKind.VOICE,
+            name="大树1",
+            authorized=True,
+            status="ready",
+            source_type="custom_clone",
+        ),
+        provider_asset_id="7869",
+    )
+    request = _request().model_copy(update={"voice_id": "shuying-voice-7869"})
+
+    pending = provider.submit(request)
+    resumed = provider.resume_submit(request, pending.job_id)
+
+    assert pending.status == AvatarProviderStatus.RUNNING
+    assert pending.job_id == "voice-tts:tts-task-disconnect"
     assert resumed.status == AvatarProviderStatus.QUEUED
     assert resumed.job_id == "video-job-voice"
     assert sum(url.endswith("/voice_2") for url in calls) == 1

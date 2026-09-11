@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from http.client import RemoteDisconnected
 import json
 import math
 import mimetypes
@@ -162,9 +163,14 @@ def _default_transport(
         raise AvatarProviderError(
             f"数字人服务 HTTP {exc.code}：{detail or '请求失败'}", kind=kind
         ) from exc
-    except (TimeoutError, URLError) as exc:
+    except (TimeoutError, URLError, RemoteDisconnected) as exc:
+        message = (
+            "数字人服务连接被远端中断，请稍后重试。"
+            if isinstance(exc, RemoteDisconnected)
+            else "无法连接数字人服务，请检查服务地址和运行状态。"
+        )
         raise AvatarProviderError(
-            "无法连接数字人服务，请检查服务地址和运行状态。",
+            message,
             kind=ProviderErrorKind.CONNECTION,
             outcome_unknown=method == "POST",
         ) from exc
@@ -2191,7 +2197,15 @@ class ShuyingLegacyAvatarProvider:
         tts_task_id = str(data or "").strip()
         if not tts_task_id:
             raise AvatarProviderError("克隆声音合成未返回任务编号。")
-        return tts_task_id, self._query_cloned_voice_audio(tts_task_id)
+        try:
+            audio_url = self._query_cloned_voice_audio(tts_task_id)
+        except AvatarProviderError as exc:
+            # /voice_2 已经创建了远端 TTS 任务。查询断连时保留任务号，
+            # 让工作流后续恢复查询，避免安全重试重复提交克隆声音。
+            if exc.kind == ProviderErrorKind.CONNECTION:
+                return tts_task_id, None
+            raise
+        return tts_task_id, audio_url
 
     def _query_cloned_voice_audio(self, tts_task_id: str) -> str | None:
         detail = self._voice_form_request(

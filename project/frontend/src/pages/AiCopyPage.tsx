@@ -10,6 +10,7 @@ import {
   Modal,
   Popconfirm,
   Segmented,
+  Select,
   Space,
   Spin,
   Tag,
@@ -69,6 +70,56 @@ interface CopyComparisonRow {
   source: string;
   result: string;
   needsReview: boolean;
+}
+
+interface CopySettingsProps {
+  targetLength: number;
+  onTargetLengthChange: (value: number) => void;
+  skillPrompt: string;
+  onSkillPromptChange: (value: string) => void;
+  compact?: boolean;
+}
+
+function CopySettings({
+  targetLength,
+  onTargetLengthChange,
+  skillPrompt,
+  onSkillPromptChange,
+  compact = false,
+}: CopySettingsProps) {
+  return (
+    <div className={`ai-copy-compose-settings${compact ? " is-compact" : ""}`}>
+      <div className="ai-copy-length-field">
+        <div>
+          <Text strong>目标字数</Text>
+          <Text type="secondary">按目标组织完整口播，不会直接截断</Text>
+        </div>
+        <Select
+          aria-label="目标字数"
+          value={targetLength}
+          onChange={onTargetLengthChange}
+          options={[100, 150, 200, 300, 500, 800].map((value) => ({
+            value,
+            label: `${value}字`,
+          }))}
+          style={{ width: 120 }}
+        />
+      </div>
+      <div className="ai-copy-skill-field">
+        <Text strong>客户 Skill（可选）</Text>
+        <Text type="secondary">只影响表达方式，不覆盖事实和合规要求</Text>
+        <TextArea
+          aria-label="客户 Skill"
+          placeholder="例如：先讲结论，再给 3 个步骤；语气像门店老板聊天；每句不超过 18 个字"
+          rows={compact ? 2 : 4}
+          value={skillPrompt}
+          onChange={(event) => onSkillPromptChange(event.target.value)}
+          showCount={!compact}
+          maxLength={8000}
+        />
+      </div>
+    </div>
+  );
 }
 
 function formatTime(value: string | null) {
@@ -145,6 +196,8 @@ export default function AiCopyPage() {
   const [sourceText, setSourceText, clearSourceText] = usePersistentState("ai_copy_source_text", "");
   const [sellingPoints, setSellingPoints, clearSellingPoints] = usePersistentState("ai_copy_selling_points", "");
   const [callToAction, setCallToAction, clearCallToAction] = usePersistentState("ai_copy_call_to_action", "");
+  const [targetLength, setTargetLength, clearTargetLength] = usePersistentState<number>("ai_copy_target_length", 150);
+  const [skillPrompt, setSkillPrompt, clearSkillPrompt] = usePersistentState("ai_copy_skill_prompt", "");
 
   const [capability, setCapability] = useState<CopywritingCapabilitiesResponse | null>(null);
   const [capabilityError, setCapabilityError] = useState("");
@@ -168,7 +221,8 @@ export default function AiCopyPage() {
     contentBrief.trim() ||
     sourceText.trim() ||
     sellingPoints.trim() ||
-    callToAction.trim(),
+    callToAction.trim() ||
+    skillPrompt.trim(),
   );
   const enabled = capability?.enabled === true;
   const isSandbox = capability?.mode === "sandbox";
@@ -184,15 +238,16 @@ export default function AiCopyPage() {
     const inputRate = Number(capability?.input_price_credits_per_1k_tokens ?? "0.0015");
     const outputRate = Number(capability?.output_price_credits_per_1k_tokens ?? "0.003");
     const minimum = Number(capability?.minimum_charge_credits ?? "0.01");
-    const estimatedInputTokens = Math.max(sourceDocument.trim().length, 1);
-    const estimatedOutputTokens = mode === "rewrite"
-      ? Math.max(sourceText.trim().length, 1)
-      : Math.max(contentBrief.trim().length, 600);
+    const estimatedInputTokens = Math.max(
+      sourceDocument.trim().length + skillPrompt.trim().length,
+      1,
+    );
+    const estimatedOutputTokens = Math.max(targetLength, 1);
     return roundCreditsUp(
       estimatedInputTokens / 1000 * inputRate + estimatedOutputTokens / 1000 * outputRate,
       minimum,
     );
-  }, [capability, contentBrief, mode, sourceDocument, sourceText]);
+  }, [capability, mode, sourceDocument, targetLength]);
 
   useEffect(() => {
     if (handledHandoffKeyRef.current === location.key) return;
@@ -203,13 +258,14 @@ export default function AiCopyPage() {
 
     setMode("rewrite");
     setSourceText(handoffText);
+    clearSkillPrompt();
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
     const label = typeof handoff?.sourceLabel === "string" ? handoff.sourceLabel : "转写稿";
     setSourceLabel(label);
     toast.success(`已带入「${label}」，确认内容后再开始改写`);
-  }, [location.key, location.state, setMode, setSourceText, toast]);
+  }, [clearSkillPrompt, location.key, location.state, setMode, setSourceText, toast]);
 
   const refreshHistory = useCallback(async () => {
     setHistoryLoading(true);
@@ -302,6 +358,8 @@ export default function AiCopyPage() {
     try {
       const common = {
         style_prompt: mode === "rewrite" ? TRANSCRIPT_DEDUP_REWRITE_PROMPT : "",
+        skill_prompt: skillPrompt,
+        target_length: targetLength,
         tone: "natural",
         variant_count: 1,
       };
@@ -344,7 +402,9 @@ export default function AiCopyPage() {
     mode,
     refreshHistory,
     sellingPoints,
+    skillPrompt,
     sourceText,
+    targetLength,
     toast,
   ]);
 
@@ -378,6 +438,8 @@ export default function AiCopyPage() {
       setSourceText(detail.source_text);
       setSellingPoints(detail.selling_points);
       setCallToAction(detail.call_to_action);
+      setSkillPrompt(detail.skill_prompt || "");
+      setTargetLength(detail.target_length || 150);
       setSourceLabel(item.title || "历史文案");
       applyResult(detail);
       setHistoryOpen(false);
@@ -393,6 +455,8 @@ export default function AiCopyPage() {
     setSourceText("");
     setSellingPoints("");
     setCallToAction("");
+    clearSkillPrompt();
+    setTargetLength(150);
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
@@ -408,6 +472,8 @@ export default function AiCopyPage() {
     clearSourceText();
     clearSellingPoints();
     clearCallToAction();
+    clearSkillPrompt();
+    clearTargetLength();
     setTaskId(null);
     setLastResponse(null);
     setVariants([]);
@@ -574,6 +640,13 @@ export default function AiCopyPage() {
                 />
               )}
 
+              <CopySettings
+                targetLength={targetLength}
+                onTargetLengthChange={setTargetLength}
+                skillPrompt={skillPrompt}
+                onSkillPromptChange={setSkillPrompt}
+              />
+
               <div className="ai-copy-compose-actions">
                 <div className="ai-copy-cost-estimate">
                   {isSandbox ? (
@@ -605,6 +678,13 @@ export default function AiCopyPage() {
             </div>
           ) : (
             <div className="ai-copy-review-panel">
+              <CopySettings
+                targetLength={targetLength}
+                onTargetLengthChange={setTargetLength}
+                skillPrompt={skillPrompt}
+                onSkillPromptChange={setSkillPrompt}
+                compact
+              />
               <div className="ai-copy-summary-bar">
                 <Space size={10} wrap>
                   <span className="ai-copy-summary-chip is-success"><CheckCircleFilled /> {comparisonRows.length}段已改写</span>

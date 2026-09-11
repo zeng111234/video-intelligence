@@ -44,6 +44,15 @@ _CTA_PATTERN = re.compile(
     r"评论|留言|关注|点击|私信|进群|领取|查看|扫码|加我|主页|下方|戳我|扣\d|打\d"
 )
 
+# 必需视觉窗口的降级契约：主类型被禁用或无法执行时，必须按这里声明的
+# fallback_kind 降级执行，禁止静默丢弃。静默丢弃会让整条视觉管线 0 产出，
+# 下游 visual_release / creative / publish_rights 必然失败。
+REQUIRED_WINDOW_FALLBACK_KINDS: dict[str, str] = {
+    "data_chart": "deterministic_card",
+    "concept_card": "deterministic_card",
+    "cta_card": "deterministic_card",
+}
+
 
 def _classify_visual_intent_for_window(text: str) -> str:
     """基于通用规则的视觉窗口分类（不依赖样片答案）。
@@ -103,7 +112,7 @@ def _plan_visual_windows(
         text = _text(seg.get("text") or "")
         intent = _classify_visual_intent_for_window(text)
         # 必须有视觉的窗口（信息卡 / CTA）
-        if intent in {"data_chart", "concept_card", "cta_card"}:
+        if intent in REQUIRED_WINDOW_FALLBACK_KINDS:
             windows.append(
                 {
                     "start": round(start, 3),
@@ -113,7 +122,7 @@ def _plan_visual_windows(
                     "required": True,
                     "min_seconds": min(span, 4.0) if is_long else min(span, 2.5),
                     "preferred_mode": "full" if span >= 3.0 else "pip",
-                    "fallback_kind": "deterministic_card",
+                    "fallback_kind": REQUIRED_WINDOW_FALLBACK_KINDS[intent],
                 }
             )
         elif span >= 4.0 and not is_short:
@@ -141,7 +150,7 @@ def _plan_visual_windows(
     if is_long:
         # 如果 full 不足 2，强行提升最早两个 spoken_point 窗口为 full
         for w in windows:
-            if w["kind"] in {"data_chart", "concept_card", "cta_card"}:
+            if w["kind"] in REQUIRED_WINDOW_FALLBACK_KINDS:
                 continue
             if len(full_windows) >= 2:
                 break

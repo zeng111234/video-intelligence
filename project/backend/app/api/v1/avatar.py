@@ -391,7 +391,12 @@ def get_asset_media(
         and path.suffix.lower() == ".webm"
     ):
         media_type = "audio/webm"
-    return FileResponse(path, media_type=media_type, filename=path.name)
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=path.name,
+        content_disposition_type="inline",
+    )
 
 
 @router.get("/assets/{asset_id}/voice-preview")
@@ -497,6 +502,7 @@ def get_job_media(task_id: str, service: AvatarService = Depends(get_avatar_serv
         path,
         media_type=task.result_mime or "video/mp4",
         filename=f"{_safe_download_name(task.title)}.mp4",
+        content_disposition_type="inline",
     )
 
 

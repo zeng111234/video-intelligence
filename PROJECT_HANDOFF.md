@@ -1,5 +1,82 @@
 # VideoInsight 项目交接（0.2.40）
 
+## Luna 立即执行：通用“动态口播精剪”模板（2026-09-03）
+
+### 目标
+
+把同事用剪映 AI 生成的下列视频作为**正向质量标杆**，在正式 `/video-editor`
+链路中做成可迁移到陌生客户视频的通用模板，而不是写死样片文案：
+
+`C:\Users\zeng\xwechat_files\wxid_72l72v76f70a22_385d\msg\video\2026-09\f55c8b06254cfbd208e5b4054cc350d7.mp4`
+
+标杆特征：大号单行字幕、黄色关键词、与口播语义匹配的丰富贴纸、入场动效、
+声音标点、真实全屏 B-roll，整体节奏明显优于现有成片。根目录
+`v4-burned.mp4` 不是标杆，它是叠加了错误字幕的本地二次渲染。
+
+### 实时工作区（必须保留）
+
+- 分支：`feature/brand-emphasis-style`。
+- 禁止 `reset/checkout/clean/push`，不部署，不调用付费接口。
+- 既有未跟踪 `v4-frame-*.png`、`v4.ass` 属于用户文件，不删除。
+- 本轮修改了：
+  - `src/services/style_presets.py`
+  - `src/services/motion_design.py`
+  - `src/services/video_editor_cloud.py`
+  - `src/services/video_editor_workflow.py`
+  - `project/backend/app/api/v1/video_editor.py`
+  - `project/frontend/src/api/client.ts`
+  - `project/frontend/src/pages/VideoEditorPage.tsx`
+- 已验证：上述 Python 文件 `py_compile` 通过，`git diff --check` 通过（只有
+  LF/CRLF 警告）。**尚未跑单测、前端构建、正式渲染和页面验收，不能宣称完成。**
+
+### 本轮已经写入但尚未验收的内容
+
+1. `talking-head-brand-emphasis-v1` 改为“动态口播精剪”：取消错误的常驻品牌头和
+   中央大卡片；加入 54px 单行字幕、黄色关键词、贴纸/音效/B-roll 策略。
+2. 新任务由前端和 API 默认携带该 preset，并持久化进 `provider_payload` 和
+   `edit_plan`；旧任务仍可使用 pure-adaptive。
+3. 删除 `_local_title_candidates` 中“会员制/小店长/烧烤店”样片特判。
+4. 陌生领域字幕增加 transcript-grounded 关键词事件；关键词必须来自对应 ASR
+   segment，不允许虚构或固定答案。
+5. 正式 release director 开启已有授权矢量素材库；B-roll 仍先匹配素材库，缺口才
+   走现有生图能力，失败再降级。贴纸不计作真实 B-roll。
+6. 关键词贴纸增加黄色弹出样式，并把部分贴纸移到上半屏；音效从统一正弦音扩展为
+   本地合成的 pop/impact/whoosh/chime 组合，不引入版权音频文件。
+
+### Luna 的最短执行顺序
+
+1. 先运行 `git status --short --branch`，阅读本节和根目录 `AGENTS.md`；不得重做探索。
+2. 审查当前 diff，优先修正参数透传和重复字段：
+   - 确认 `style_preset_id` 从页面 → API → `create_cloud_batch/create_batch` →
+     item → analysis → review → local renderer 全程不丢失；
+   - `_batch_payload` 的 preview 与最终 ASS 必须使用同一 preset；
+   - preset 的 `playback_rate=1.08` 必须真正写入本地导出 task，不能仍被常量覆盖。
+3. 补最小回归测试：
+   - `tests/test_style_presets.py`：深拷贝、动态模板参数、未知 ID 回退；
+   - `tests/test_motion_design.py`：生活/美业/教程三类陌生文本均产生少量 grounded
+     关键词事件，`semantic_text` 必须出现在 `source_text`；
+   - `tests/test_video_editor_workflow.py`：生产代码不含上述三个样片固定标题；音效
+     有延迟且包含多种本地合成 profile；
+   - 后端 API 和前端测试：默认请求包含 `talking-head-brand-emphasis-v1`。
+4. 只运行定向测试、前端对应测试/build、`py_compile`、`git diff --check`；失败只修
+   根因，不扩大重构。
+5. 用陌生源片
+   `C:\Users\zeng\Videos\大树老师无剪辑素材7.13版.mp4` 截取 20–30 秒，必须从
+   `http://localhost:1001/video-editor` 正式走 quote → 确认 → generation → export；
+   使用本地模型和本地 FFmpeg，不发起付费云调用。
+6. 实际验收输出：H.264 + AAC + 烧录字幕；至少 3 个与口播绑定的视觉事件；至少
+   1 个真实授权全屏 B-roll、1 个 PiP 或局部强调；有可听但不盖人声的音效；无固定
+   样片词、无双字幕、无黑边/遮脸/遮字幕。页面必须能播放并下载 200。
+7. 若素材库没有语义匹配的真实 B-roll，明确记录缺口，**不得拿贴纸或生图静帧冒充
+   真实 B-roll，也不得宣称全部完成**。
+
+### 验收输出只报告
+
+- 修改文件；定向测试/前端构建结果；正式任务 ID；最终 MP4 路径与 ffprobe；
+- 素材库、生成图、程序化兜底各用了多少；音效事件数及来源；
+- 页面播放/下载状态；与正向标杆仍存在的可见差距；是否产生第三方费用（默认应为 0）。
+
+
 ## 当前视频精剪暂停点（2026-08-25）
 
 > 本节是当前自动口播精剪 Goal 的最新交接；下方 0.2.40 发布信息是历史发布交接，不能覆盖本节的实时状态。

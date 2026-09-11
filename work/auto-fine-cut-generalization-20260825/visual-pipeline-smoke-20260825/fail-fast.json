@@ -1,7 +1,0 @@
-{
-  "batch_id": "edit-batch-visual-failfast-smoke",
-  "expected_code": "VISUAL_PIPELINE_NOT_EXECUTED",
-  "raised": true,
-  "message": "VISUAL_PIPELINE_NOT_EXECUTED：自动精剪请求未进入导演与视觉编排路径。",
-  "passed": true
-}

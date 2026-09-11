@@ -1,0 +1,24 @@
+{
+  "asset_id": "icon-tabler-file-text",
+  "kind": "label_icon",
+  "name": "file-text",
+  "editorial_kinds": [
+    "process"
+  ],
+  "stored_name": "icon-tabler-file-text.png",
+  "media_type": "image/png",
+  "source_provider": "Tabler Icons",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_mit_asset",
+  "rights_holder": "Paweł Kuna / Tabler Icons contributors",
+  "attribution_required": true,
+  "attribution_text": "Icons: Paweł Kuna / Tabler Icons contributors — https://github.com/tabler/tabler-icons — MIT",
+  "authorization_status": "confirmed",
+  "rights_status": "mit",
+  "publish_licensed": true,
+  "license_name": "MIT",
+  "license_url": "https://github.com/tabler/tabler-icons/blob/master/LICENSE",
+  "source_page": "https://github.com/tabler/tabler-icons",
+  "sha256": "a1145d06ef539c76ff767c4e17c688401dd8ae4c37ea8af58c1c6ce158eb780e",
+  "usage": "label_furniture_icon_15_to_25_percent_of_label_width"
+}

@@ -164,7 +164,9 @@ class BatchCreateRequest(BaseModel):
     output_resolution: str = Field("1080x1920", pattern="^\\d{2,5}x\\d{2,5}$")
     output_fps: int = Field(30, ge=15, le=60)
     output_bitrate: str = Field("4M", pattern="^\\d+(?:\\.\\d+)?M$")
-    bgm_enabled: bool = True
+    # Voice-first default: background music is opt-in; short event SFX are
+    # scheduled by the renderer independently.
+    bgm_enabled: bool = False
     bgm_id: str | None = None
     bgm_volume: float = Field(0.24, ge=0, le=1)
     output_profile: str | None = Field(
@@ -174,8 +176,8 @@ class BatchCreateRequest(BaseModel):
     )
     quote_id: str | None = None
     style_preset_id: str = Field(
-        "talking-head-grammar-only-v1",
-        pattern="^(talking-head-pure-adaptive-v1|talking-head-brand-emphasis-v1|talking-head-local-grammar-v2|talking-head-grammar-only-v1)$",
+        "talking-head-semantic-adaptive-v1",
+        pattern="^(talking-head-pure-adaptive-v1|talking-head-brand-emphasis-v1|talking-head-semantic-adaptive-v1|talking-head-local-grammar-v2|talking-head-grammar-only-v1)$",
     )
     billing_confirmation: BillingConfirmationRequest | None = None
 
@@ -445,7 +447,12 @@ def get_visual_asset_media(
     except VideoEditorWorkflowError as exc:
         raise _workflow_error(exc) from exc
     path = Path(asset["_path"])
-    return FileResponse(path, media_type=asset["media_type"], filename=path.name)
+    return FileResponse(
+        path,
+        media_type=asset["media_type"],
+        filename=path.name,
+        content_disposition_type="inline",
+    )
 
 
 @router.get("/bgm")
@@ -504,6 +511,7 @@ def get_bgm_media(
         asset["_path"],
         media_type=asset["media_type"],
         filename=asset["original_name"],
+        content_disposition_type="inline",
     )
 
 
@@ -514,7 +522,12 @@ def get_source_media(source_id: str, workflow: VideoEditorWorkflowService = Depe
     except VideoEditorWorkflowError as exc:
         raise _workflow_error(exc) from exc
     path = source["_path"]
-    return FileResponse(path, media_type=source["media_type"], filename=source["file_name"])
+    return FileResponse(
+        path,
+        media_type=source["media_type"],
+        filename=source["file_name"],
+        content_disposition_type="inline",
+    )
 
 
 @router.post("/analyses")
@@ -880,7 +893,12 @@ def get_job_media(task_id: str, workflow: VideoEditorWorkflowService = Depends(g
     path = Path(task.result_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="成片文件不存在。")
-    return FileResponse(path, media_type=task.result_mime or "video/mp4", filename=path.name)
+    return FileResponse(
+        path,
+        media_type=task.result_mime or "video/mp4",
+        filename=path.name,
+        content_disposition_type="inline",
+    )
 
 
 @router.get("/jobs/{task_id}/download")

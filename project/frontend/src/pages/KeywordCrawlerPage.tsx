@@ -77,7 +77,7 @@ async function openResolvedCandidateOriginalMedia(candidateId: string) {
   await openCrawlerCandidateOriginalInBrowser(candidateId);
 }
 
-function openCandidateOriginalMedia(candidate: Pick<CrawlerCandidateResult, "platform" | "video_id" | "source_url">) {
+async function openCandidateOriginalMedia(candidate: Pick<CrawlerCandidateResult, "platform" | "video_id" | "source_url">) {
   if (candidate.platform === "xiaohongshu") {
     return openResolvedCandidateOriginalMedia(candidate.video_id);
   }
@@ -1912,7 +1912,6 @@ function MaterialCandidateTable({
   originalScriptLoadingId: string | null;
   onSortChange: (value: MaterialSort) => void;
 }) {
-  const toast = useToast();
   const [detail, setDetail] = useState<CrawlerCandidateResult | null>(null);
   const metricCoverage = useMemo(() => materialMetricCoverage(candidates), [candidates]);
   const rows = useMemo(() => {
@@ -2306,6 +2305,7 @@ function HotspotCandidateTable({
   onGenerateOriginalScript: (candidate: CrawlerCandidateResult) => void;
   originalScriptLoadingId: string | null;
 }) {
+  const toast = useToast();
   const [listLabel, setListLabel] = useState("all");
   const [detail, setDetail] = useState<CrawlerCandidateResult | null>(null);
   const labels = useMemo(

@@ -18,7 +18,8 @@ class CopywritingGenerateRequest(BaseModel):
     selling_points: str = Field("", description="核心卖点")
     call_to_action: str = Field("", description="行动号召")
     style_prompt: str = Field("", description="风格提示")
-    target_length: int | None = Field(None, description="已废弃的目标长度")
+    skill_prompt: str = Field("", max_length=8000, description="客户提供的 Skill 写作规则")
+    target_length: int | None = Field(None, ge=50, le=800, description="目标字数")
     tone: str = Field("professional", description="语调")
     variant_count: int = Field(1, ge=1, le=5, description="变体数量")
 
@@ -28,7 +29,8 @@ class CopywritingRewriteRequest(BaseModel):
     platform: str | None = Field(None, description="已废弃的目标平台")
     target_audience: str = Field("", description="目标受众")
     style_prompt: str = Field("", description="风格提示")
-    target_length: int | None = Field(None, description="已废弃的目标长度")
+    skill_prompt: str = Field("", max_length=8000, description="客户提供的 Skill 写作规则")
+    target_length: int | None = Field(None, ge=50, le=800, description="目标字数")
     tone: str = Field("professional", description="语调")
     variant_count: int = Field(1, ge=1, le=5, description="变体数量")
 
@@ -68,6 +70,7 @@ class CopywritingDetailResponse(CopywritingSummaryResponse):
     selling_points: str = ""
     call_to_action: str = ""
     style_prompt: str = ""
+    skill_prompt: str = ""
 
 
 class CopywritingCapabilitiesResponse(BaseModel):
@@ -211,7 +214,8 @@ def generate(
             selling_points=body.selling_points,
             call_to_action=body.call_to_action,
             style_prompt=body.style_prompt,
-            target_length=300,
+            skill_prompt=body.skill_prompt,
+            target_length=body.target_length or 300,
             tone=body.tone,
             variant_count=body.variant_count,
         )
@@ -232,7 +236,8 @@ def rewrite(
             platform="douyin",
             target_audience=body.target_audience,
             style_prompt=body.style_prompt,
-            target_length=300,
+            skill_prompt=body.skill_prompt,
+            target_length=body.target_length or 300,
             tone=body.tone,
             variant_count=body.variant_count,
         )
@@ -322,4 +327,5 @@ def _to_detail(task) -> CopywritingDetailResponse:
         selling_points=task.selling_points,
         call_to_action=task.call_to_action,
         style_prompt=task.style_prompt,
+        skill_prompt=getattr(task, "skill_prompt", ""),
     )

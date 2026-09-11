@@ -1,0 +1,24 @@
+{
+  "asset_id": "icon-tabler-info-circle",
+  "kind": "label_icon",
+  "name": "info-circle",
+  "editorial_kinds": [
+    "process"
+  ],
+  "stored_name": "icon-tabler-info-circle.png",
+  "media_type": "image/png",
+  "source_provider": "Tabler Icons",
+  "source_type": "third_party_free_asset",
+  "asset_origin": "third_party_mit_asset",
+  "rights_holder": "Paweł Kuna / Tabler Icons contributors",
+  "attribution_required": true,
+  "attribution_text": "Icons: Paweł Kuna / Tabler Icons contributors — https://github.com/tabler/tabler-icons — MIT",
+  "authorization_status": "confirmed",
+  "rights_status": "mit",
+  "publish_licensed": true,
+  "license_name": "MIT",
+  "license_url": "https://github.com/tabler/tabler-icons/blob/master/LICENSE",
+  "source_page": "https://github.com/tabler/tabler-icons",
+  "sha256": "9bf92a5daff5a075071a39c68609ed9a34acb16261f86446325508996cffff02",
+  "usage": "label_furniture_icon_15_to_25_percent_of_label_width"
+}
