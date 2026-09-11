@@ -124,9 +124,34 @@ class _SimilarityRetryEngine:
         return self.rewrite(kwargs.get("content_brief", ""), **kwargs)
 
 
+class _SimilarButChangedEngine:
+    """模型真的重写了，但改写幅度小、与原文仍高度相似。"""
+
+    def __init__(self) -> None:
+        self.rewrite_calls: list[dict] = []
+        self.last_usage: dict[str, int] = {}
+
+    def capabilities(self) -> dict[str, str | bool | int]:
+        return {
+            "provider_name": "similar-but-changed",
+            "mode": "sandbox",
+            "enabled": True,
+            "max_input_chars": 5000,
+            "max_variants": 1,
+        }
+
+    def rewrite(self, source_text: str, **kwargs) -> list[str]:
+        self.rewrite_calls.append(kwargs)
+        self.last_usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        # 逐字追加标记：与原文高度相似，但不是原样回传。
+        return [f"{source_text}（第{len(self.rewrite_calls)}版）"]
+
+    def generate(self, **kwargs) -> list[str]:
+        return self.rewrite(kwargs.get("content_brief", ""), **kwargs)
+
+
 class _AttentionEngine:
     last_attention_terms = ["竞品科技", "未出现在结果里的名称"]
-
     def capabilities(self) -> dict[str, str | bool | int]:
         return {
             "provider_name": "attention-test",
@@ -251,37 +276,45 @@ class TestCopywritingServiceEdgeCases:
         with pytest.raises(ValueError, match="最大长度限制"):
             self.svc.rewrite(source_text=long_text)
 
-    def test_rewrite_engine_exception_falls_back_to_source(self):
-        """引擎异常时使用原文，保证流水线节点成功。"""
+    def test_rewrite_engine_exception_fails_instead_of_echoing_source(self):
+        """引擎异常时必须如实报失败，不得把原文当成改写结果返回。
+
+        历史缺陷：这里曾断言 status=SUCCEEDED 且 result_text == 原文，导致接口
+        返回 200 而"生成内容与原文完全相同"，看起来像一次成功改写。
+        """
         svc = CopywritingService(self.repo, _FailingEngine())
         task = svc.rewrite(source_text="触发引擎异常")
-        assert task.status == TaskStatus.SUCCEEDED
-        assert task.result_text == "触发引擎异常"
-        assert task.compliance_status == "best_effort"
-        assert task.error_message is None
-        assert any("使用输入内容" in note for note in task.compliance_notes)
+        assert task.status == TaskStatus.FAILED
+        assert task.result_text is None
+        assert task.result_variants == []
+        assert task.compliance_status == "model_unavailable"
+        assert task.charged_credits == 0.0
+        assert task.error_message and "没有返回可用的新内容" in task.error_message
 
-    def test_rewrite_engine_empty_result_falls_back_to_source(self):
-        """引擎返回空列表时使用原文，保证流水线节点成功。"""
+    def test_rewrite_engine_empty_result_fails_instead_of_echoing_source(self):
+        """引擎返回空列表时同样必须报失败，不得回落到原文。"""
         svc = CopywritingService(self.repo, _SlowEngine())
         task = svc.rewrite(source_text="空结果测试")
-        assert task.status == TaskStatus.SUCCEEDED
-        assert task.result_text == "空结果测试"
-        assert task.result_variants == ["空结果测试"]
-        assert task.compliance_status == "best_effort"
-        assert task.error_message is None
+        assert task.status == TaskStatus.FAILED
+        assert task.result_text is None
+        assert task.result_variants == []
+        assert task.compliance_status == "model_unavailable"
+        assert task.charged_credits == 0.0
+        assert task.error_message and "没有返回可用的新内容" in task.error_message
 
-    def test_generate_engine_exception_falls_back_to_combined_input(self):
+    def test_generate_engine_exception_fails_instead_of_echoing_input(self):
+        """生成路径同样不得把用户填写的内容当成生成结果返回。"""
         task = CopywritingService(self.repo, _FailingEngine()).generate(
             content_brief="介绍这款工具",
             selling_points="降低内容成本",
             call_to_action="欢迎了解",
         )
 
-        assert task.status == TaskStatus.SUCCEEDED
-        assert task.result_text == "介绍这款工具\n降低内容成本\n欢迎了解"
-        assert task.compliance_status == "best_effort"
-        assert task.error_message is None
+        assert task.status == TaskStatus.FAILED
+        assert task.result_text is None
+        assert task.compliance_status == "model_unavailable"
+        assert task.charged_credits == 0.0
+        assert task.error_message and "没有返回可用的新内容" in task.error_message
 
     def test_rewrite_automatically_retries_when_risk_expression_remains(self):
         engine = _ComplianceRetryEngine()
@@ -347,7 +380,12 @@ class TestCopywritingServiceEdgeCases:
         assert any("与原文过于相似" in note for note in task.compliance_notes)
         assert task.token_usage == {"prompt_tokens": 20, "completion_tokens": 10, "total_tokens": 30}
 
-    def test_rewrite_uses_final_version_when_three_results_are_still_too_similar(self):
+    def test_rewrite_rejects_verbatim_source_returned_by_engine(self):
+        """模型原样回传输入时判定为未改写，而不是当成成功结果。
+
+        公司控制层跑的是同一套代码；若它尚未升级，仍可能把原文原样回传。
+        逐字相同必须被拦截，避免"200 但内容与原文完全相同"。
+        """
         source = (
             "这款手柄采用经典模具，按键位置保持不变，支持四套预设和三模连接。"
             "GT13霍尔摇杆支持30到80GF阻尼调节，售价约200元，适合多种游戏。"
@@ -356,8 +394,29 @@ class TestCopywritingServiceEdgeCases:
 
         task = CopywritingService(self.repo, engine).rewrite(source_text=source)
 
+        assert task.status == TaskStatus.FAILED
+        assert task.result_text is None
+        assert task.compliance_status == "model_unavailable"
+        assert task.charged_credits == 0.0
+        assert len(engine.rewrite_calls) == 3
+        assert task.error_message and "没有返回可用的新内容" in task.error_message
+
+    def test_rewrite_keeps_final_version_when_model_keeps_returning_similar_text(self):
+        """模型确实产出了内容（只是仍偏相似）时，保留最后一版而不是失败。
+
+        这与"原样回传原文"不同：去重闸门是质量阈值，只要模型真的重写过，
+        就按 best_effort 交付并提示人工复核。
+        """
+        source = (
+            "这款手柄采用经典模具，按键位置保持不变，支持四套预设和三模连接。"
+            "GT13霍尔摇杆支持30到80GF阻尼调节，售价约200元，适合多种游戏。"
+        )
+        engine = _SimilarButChangedEngine()
+
+        task = CopywritingService(self.repo, engine).rewrite(source_text=source)
+
         assert task.status == TaskStatus.SUCCEEDED
-        assert task.result_text == source
+        assert task.result_text == f"{source}（第3版）"
         assert task.compliance_status == "best_effort"
         assert len(engine.rewrite_calls) == 3
         assert any("使用最后一次生成结果" in note for note in task.compliance_notes)
@@ -569,14 +628,18 @@ class TestCopywritingServiceEdgeCases:
         tasks = self.svc.batch_rewrite(source_texts=[])
         assert tasks == []
 
-    def test_batch_rewrite_model_errors_keep_every_pipeline_item(self):
-        """批量改写遇到模型异常时，每项都回退输入并继续。"""
+    def test_batch_rewrite_model_errors_report_every_item_as_failed(self):
+        """批量改写遇到模型异常时，每项仍各自成任务，但必须如实标记失败。
+
+        保留"每项一个任务"的流水线连续性，但不得再用原文冒充成功结果。
+        """
         svc = CopywritingService(self.repo, _FailingEngine())
         tasks = svc.batch_rewrite(source_texts=["失败一", "失败二"])
         assert len(tasks) == 2
-        assert all(t.status == TaskStatus.SUCCEEDED for t in tasks)
-        assert [task.result_text for task in tasks] == ["失败一", "失败二"]
-        assert all(task.compliance_status == "best_effort" for task in tasks)
+        assert all(t.status == TaskStatus.FAILED for t in tasks)
+        assert [task.result_text for task in tasks] == [None, None]
+        assert all(task.compliance_status == "model_unavailable" for task in tasks)
+        assert all(task.charged_credits == 0.0 for task in tasks)
 
     def test_is_mock_flag_from_sandbox(self):
         """沙箱引擎应设置 is_mock=True。"""

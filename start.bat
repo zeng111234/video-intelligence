@@ -1,4 +1,5 @@
 @echo off
+setlocal
 echo ========================================
 echo  Video Intelligence System - Quick Start
 echo ========================================
@@ -14,10 +15,13 @@ if %errorlevel% equ 0 (
     echo [INFO] Using Windows PowerShell 5.1 (powershell.exe^)
 )
 
-:: The PowerShell script checks runtimes, creates .venv and installs project dependencies.
+:: Default behaviour connects to the company server: company login, credits and
+:: cloud transcription / cloud video editing.  For an offline local demo that
+:: deliberately disables all of that, run:  start.bat -LocalDemo
 echo [START] Checking the environment and launching all services, please wait...
+echo [MODE]  Company server mode (use -LocalDemo for the offline demo instead)
 echo.
-%PS_CMD% -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start_all_services.ps1"
+%PS_CMD% -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\start_all_services.ps1" %*
 
 if %errorlevel% neq 0 (
     echo.

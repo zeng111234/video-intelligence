@@ -1,19 +1,30 @@
-﻿# Video Intelligence System - Service Startup Script
+# Video Intelligence System - Service Startup Script
 # Version: 2.0.5
 # Date: 2026-07-20
 
 param(
     [switch]$SkipBrowser,
     [switch]$SkipHealthCheck,
-    # Uses the real company authentication and credit service while keeping
-    # source-preview files in a separate, ignored runtime directory.  This is
-    # intentionally opt-in: the normal source launcher remains fully local.
+    # 交付默认连接公司服务：公司登录、积分与云转写/云剪辑。
+    #
+    # 历史行为是"默认本地演示、必须手动加 -UseCompanyServer 才连公司"，与交接
+    # 文档里"直接双击 start.bat 即可"相矛盾：双击后页面能打开，但登录、积分、
+    # 云转写和云剪辑其实全是关的。现在把公司模式改成默认，本地演示改为显式开关。
+    [switch]$LocalDemo,
+    # 兼容旧脚本与旧文档里的写法；现在的默认行为与它一致，保留只为不破坏既有调用。
     [switch]$UseCompanyServer,
     # 只启动并管理本地 FastAPI，避免修复/验收后端时触碰已有前端进程。
     [switch]$BackendOnly,
     [string]$CompanyServerUrl = "https://xmt.syszr.cn",
     [string]$CompanyRuntimeRoot = ""
 )
+
+if ($LocalDemo -and $UseCompanyServer) {
+    throw "不能同时指定 -LocalDemo 和 -UseCompanyServer。默认已连接公司服务；本地演示请只加 -LocalDemo。"
+}
+
+# 公司服务是交付默认路径；只有显式 -LocalDemo 才退回本地演示。
+$connectCompanyServer = -not $LocalDemo
 
 # === UTF-8 encoding ===
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -49,9 +60,14 @@ function Import-ProjectEnvironment {
         if ($value.Length -ge 2 -and (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'")))) {
             $value = $value.Substring(1, $value.Length - 2)
         }
-        # The source launcher must use the checked-in project's local .env,
-        # including when a stale parent shell exported sandbox values.
-        [Environment]::SetEnvironmentVariable($key, $value, "Process")
+        # A company-managed machine may already expose its approved supplier
+        # credentials as system/user environment variables.  Keep a non-empty
+        # inherited value authoritative; use the local .env only as the
+        # portable fallback for values that are not configured on this PC.
+        $currentValue = [Environment]::GetEnvironmentVariable($key, "Process")
+        if ([string]::IsNullOrWhiteSpace($currentValue)) {
+            [Environment]::SetEnvironmentVariable($key, $value, "Process")
+        }
     }
 }
 
@@ -71,7 +87,7 @@ function Write-ConfiguredModeSummary {
     Write-Log "源码实际运行模式：$summary" "INFO"
 }
 
-if ($UseCompanyServer) {
+if ($connectCompanyServer) {
     try {
         $companyServerUri = [Uri]$CompanyServerUrl
     } catch {
@@ -112,16 +128,15 @@ $services = @(
         StartArgs = @("-X", "utf8", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "2001", "--no-proxy-headers")
         WorkingDirectory = Join-Path $projectRoot "project\backend"
         WindowStyle = "Hidden"
-        # The source checkout defaults to an isolated local demo workspace.
-        # -UseCompanyServer is an explicit preview path: it uses a separate
-        # ignored runtime directory so a real customer session can never
-        # inherit this checkout's existing demo data or desktop-owner binding.
+        # 默认就是公司模式：使用独立的、被 Git 忽略的运行时目录，真实客户会话
+        # 不会继承本机已有的演示数据或桌面端 owner 绑定。只有显式 -LocalDemo
+        # 才退回本地演示工作区。
         EnvVars = @{
             PYTHONPATH = $projectRoot
             VIDEOINSIGHT_DESKTOP_CLIENT = "true"
-            VIDEOINSIGHT_DESKTOP_DEMO = if ($UseCompanyServer) { "false" } else { "true" }
-            VIDEOINSIGHT_DEMO_OWNER = if ($UseCompanyServer) { "" } else { "DEMO-0815" }
-            VIDEOINSIGHT_CONTROL_PLANE_ENABLED = if ($UseCompanyServer) { "true" } else { "false" }
+            VIDEOINSIGHT_DESKTOP_DEMO = if ($connectCompanyServer) { "false" } else { "true" }
+            VIDEOINSIGHT_DEMO_OWNER = if ($connectCompanyServer) { "" } else { "DEMO-0815" }
+            VIDEOINSIGHT_CONTROL_PLANE_ENABLED = if ($connectCompanyServer) { "true" } else { "false" }
             VIDEOINSIGHT_CONTROL_PLANE_URL = $companyServerOrigin
             VIDEOINSIGHT_RUNTIME_ROOT = $runtimeRoot
             AUTH_SESSION_STORE = "sqlite"
@@ -200,6 +215,40 @@ function Test-ServiceHealth {
         )
     } catch {
         return $false
+    }
+}
+
+function Test-CompanyServerReachable {
+    param(
+        [string]$Origin,
+        [int]$TimeoutSec = 8
+    )
+
+    # 单次探测，失败只告警不阻断。
+    #
+    # 真实故障形态是"页面能正常打开，但登录、积分、云转写和云剪辑全不可用"：
+    # 本地 FastAPI 只要拿到 URL 就能起来，公司服务是否真的活着它并不知道。
+    # 这里提前把结果打在屏幕上，避免把服务器故障误判成产品功能坏了。
+    if ([string]::IsNullOrWhiteSpace($Origin)) {
+        return
+    }
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $Origin -TimeoutSec $TimeoutSec -ErrorAction Stop
+        $statusCode = [int]$response.StatusCode
+        Write-Log "公司服务可达：$Origin（HTTP $statusCode）" "SUCCESS"
+    } catch {
+        $statusCode = 0
+        if ($_.Exception.Response) {
+            $statusCode = [int]$_.Exception.Response.StatusCode
+        }
+        if ($statusCode -gt 0) {
+            # 能拿到 HTTP 状态码说明网络与 TLS 都通了，只是该路径不公开。
+            Write-Log "公司服务可达：$Origin（HTTP $statusCode）" "SUCCESS"
+            return
+        }
+        Write-Log "公司服务当前连不上：$Origin" "WARN"
+        Write-Log "原因：$($_.Exception.Message)" "WARN"
+        Write-Log "页面仍会打开，但登录、积分、云转写和云剪辑会不可用。请检查网络后重新运行 start.bat。" "WARN"
     }
 }
 
@@ -386,7 +435,7 @@ function Start-Services {
                     Test-ServiceHealth `
                         -Url $service.HealthUrl `
                         -RequireDesktopMode `
-                        -ExpectedControlPlane ([bool]$UseCompanyServer)
+                        -ExpectedControlPlane ([bool]$connectCompanyServer)
                 } else {
                     Test-ServiceHealth -Url $service.HealthUrl
                 }
@@ -424,15 +473,15 @@ function Show-ServiceInfo {
     Write-Host ""
     Write-Host "Runtime workspace:" -ForegroundColor White
     Write-Host "  $runtimeRoot" -ForegroundColor Green
-    if ($UseCompanyServer) {
-        Write-Host "  Company authentication: $companyServerOrigin" -ForegroundColor Green
-        Write-Host "  This preview does not reuse the normal source workspace's local media or login binding." -ForegroundColor Yellow
+    if ($connectCompanyServer) {
+        Write-Host "  公司服务（登录 / 积分 / 云转写 / 云剪辑）：$companyServerOrigin" -ForegroundColor Green
+        Write-Host "  使用独立运行时目录，不会复用本机演示数据或登录绑定。" -ForegroundColor Yellow
     } else {
-        Write-Host "  Company authentication: disabled (local desktop workspace)" -ForegroundColor Yellow
-        Write-Host "  Provider modes come from .env; see the mode summary above." -ForegroundColor Yellow
+        Write-Host "  ⚠ 本地演示模式（-LocalDemo）：公司登录、积分与云服务均已关闭。" -ForegroundColor Yellow
+        Write-Host "  该模式不能用于公司业务验收与交接发布。" -ForegroundColor Yellow
     }
     Write-Host ""
-    Write-Host "Press Ctrl+C to stop all services" -ForegroundColor Gray
+    Write-Host "按 Ctrl+C 停止全部服务" -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -449,6 +498,13 @@ Stop-ExistingServices
 if (-not (Install-Dependencies)) {
     Write-Log "Dependency installation failed, startup terminated" "ERROR"
     exit 1
+}
+
+# 公司模式下先确认公司服务真的可达，再启动本地服务；不可达只告警不阻断。
+if ($connectCompanyServer) {
+    Test-CompanyServerReachable -Origin $companyServerOrigin
+} else {
+    Write-Log "本地演示模式：未连接公司服务，登录/积分/云转写/云剪辑均不可用。" "WARN"
 }
 
 # Start services

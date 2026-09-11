@@ -9,6 +9,14 @@ from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+# 交付默认 AI 文案供应商。
+#
+# 历史默认值是 DeepSeek（https://api.deepseek.com / deepseek-v4-flash），但开发机
+# 已删除 DeepSeek 密钥，交付包不能再让新电脑退回一个不可用的供应商。默认值与
+# .env.example 保持一致，统一在这里维护，避免多处硬编码再次漂移。
+DEFAULT_COPYWRITING_BASE_URL = "https://api.minimax.cn/v1/text"
+DEFAULT_COPYWRITING_MODEL = "MiniMax-M3"
+
 
 STYLE_DIRECTIVES: tuple[tuple[str, str], ...] = (
     (
@@ -107,8 +115,8 @@ class DisabledCopywritingEngine:
     def __init__(
         self,
         *,
-        base_url: str = "https://api.deepseek.com",
-        model: str = "deepseek-v4-flash",
+        base_url: str = DEFAULT_COPYWRITING_BASE_URL,
+        model: str = DEFAULT_COPYWRITING_MODEL,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -117,7 +125,7 @@ class DisabledCopywritingEngine:
 
     def capabilities(self) -> dict[str, Any]:
         return {
-            "provider_name": "deepseek",
+            "provider_name": _provider_name_for(self.base_url),
             "display_name": f"AI 文案生成 ({self.model})",
             "mode": "disabled",
             "enabled": False,
@@ -364,7 +372,7 @@ class OpenAICompatibleCopywritingEngine:
         base_url = (
             os.getenv("COPYWRITING_BASE_URL")
             or os.getenv("OPENAI_BASE_URL")
-            or "https://api.deepseek.com"
+            or DEFAULT_COPYWRITING_BASE_URL
         )
         return cls(
             api_key=_copywriting_api_key(base_url),
@@ -372,7 +380,7 @@ class OpenAICompatibleCopywritingEngine:
             model=(
                 os.getenv("COPYWRITING_MODEL")
                 or os.getenv("COPYWRITING_LLM_MODEL")
-                or "deepseek-v4-flash"
+                or DEFAULT_COPYWRITING_MODEL
             ),
             estimated_cost_cny=_optional_nonnegative_float(
                 os.getenv("COPYWRITING_ESTIMATED_REQUEST_COST_CNY")
@@ -900,11 +908,7 @@ class OpenAICompatibleCopywritingEngine:
         return payload
 
     def _provider_name(self) -> str:
-        if "deepseek.com" in self.base_url.lower():
-            return "deepseek"
-        if _is_minimax_base_url(self.base_url):
-            return "minimax"
-        return "openai_compatible"
+        return _provider_name_for(self.base_url)
 
     def _build_system_prompt(
         self,
@@ -1056,10 +1060,49 @@ class OpenAICompatibleCopywritingEngine:
             raise LLMAdapterError("LLM 返回了无效 JSON。") from exc
 
         self.last_usage = self._extract_usage(envelope.get("usage", {}))
+        # MiniMax（以及部分国内兼容网关）在鉴权失败、额度不足时仍然返回
+        # HTTP 200，把真正的错误放在 base_resp 里，且完全没有 choices。
+        # 若在这里吞掉，调用方只会看到"模型没返回内容"，历史上进而被
+        # CopywritingService 回落成"用原文当改写结果"，表现为接口 200 但
+        # 生成内容与原文完全相同。必须把供应商错误原样抛出。
+        base_resp = envelope.get("base_resp")
+        if isinstance(base_resp, dict):
+            status_code = base_resp.get("status_code")
+            if status_code not in (None, 0, "0"):
+                raise LLMAdapterError(
+                    self._provider_error_message(base_resp),
+                    retryable=status_code in {1000, 1013, 1026, 1027, 1039},
+                )
         choices = envelope.get("choices", [])
         if not choices:
             return ""
-        return str(choices[0].get("message", {}).get("content", "")).strip()
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        content = str(choice.get("message", {}).get("content", "")).strip()
+        if not content:
+            # 有 choices 但正文为空：通常是推理模型把预算耗在思考上，
+            # 或内容被安全策略拦截。这同样不能当成"成功但内容为空"。
+            finish_reason = str(choice.get("finish_reason") or "unknown")
+            raise LLMAdapterError(
+                f"AI 服务返回了空内容（finish_reason={finish_reason}），本次没有生成文本。",
+                retryable=finish_reason in {"length", "unknown"},
+            )
+        return content
+
+    @staticmethod
+    def _provider_error_message(base_resp: dict[str, Any]) -> str:
+        """把供应商 base_resp 翻译成一句可排查的中文说明。"""
+
+        code = base_resp.get("status_code")
+        detail = str(base_resp.get("status_msg") or "").strip()
+        # 1004=鉴权失败，1002=额度/限流，1008=余额不足，1026/1027/1039=限流类。
+        if code in {1002, 1004, 1008}:
+            return (
+                f"AI 文案服务的密钥无效或额度不可用（错误码 {code}）：{detail or '未提供详情'}。"
+                "请管理员检查 COPYWRITING_API_KEY / MINIMAX_TOKEN_PLAN_KEY。"
+            )
+        return (
+            f"AI 文案服务返回错误（错误码 {code}）：{detail or '未提供详情'}"
+        )
 
     def _completion_url(self, *, multimodal: bool = False) -> str:
         if self._provider_name() != "minimax":
@@ -1164,13 +1207,13 @@ def build_copywriting_engine(secrets: dict[str, Any] | None = None):
     base_url = (
         _setting("COPYWRITING_BASE_URL", secrets)
         or _setting("OPENAI_BASE_URL", secrets)
-        or "https://api.deepseek.com"
+        or DEFAULT_COPYWRITING_BASE_URL
     )
     api_key = _copywriting_api_key(base_url, secrets)
     model = (
         _setting("COPYWRITING_MODEL", secrets)
         or _setting("COPYWRITING_LLM_MODEL", secrets)
-        or "deepseek-v4-flash"
+        or DEFAULT_COPYWRITING_MODEL
     )
     if api_key:
         return OpenAICompatibleCopywritingEngine(
@@ -1197,6 +1240,17 @@ def _setting(key: str, secrets: dict[str, Any] | None = None, default: str = "")
 def _is_minimax_base_url(base_url: str) -> bool:
     host = base_url.casefold()
     return any(domain in host for domain in ("minimax.cn", "minimaxi.com", "minimax.io"))
+
+
+def _provider_name_for(base_url: str) -> str:
+    """按 base_url 判断供应商，供能力展示与请求体分派共用。"""
+
+    lowered = (base_url or "").casefold()
+    if "deepseek.com" in lowered:
+        return "deepseek"
+    if _is_minimax_base_url(base_url):
+        return "minimax"
+    return "openai_compatible"
 
 
 def _copywriting_api_key(
