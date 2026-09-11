@@ -183,7 +183,7 @@ finally {
 # pyarrow's test fixtures.  They are not runtime dependencies and the release
 # payload validator correctly rejects them as bundled data.  Remove only this
 # generated test-fixture directory before Electron copies the backend.
-$pyarrowTestData = Join-Path $desktopBackend "_internal\pyarrow\tests"
+$pyarrowTestData = Join-Path $desktopBackend "VideoInsightBackend\_internal\pyarrow\tests"
 if (Test-Path -LiteralPath $pyarrowTestData) {
     Remove-Item -LiteralPath $pyarrowTestData -Recurse -Force
 }
