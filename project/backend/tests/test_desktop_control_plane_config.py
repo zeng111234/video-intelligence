@@ -96,6 +96,14 @@ def test_source_startup_script_validates_mode_and_can_restart_backend_only():
     assert "ExpectedControlPlane" in script
 
 
+def test_windows_packaging_drops_pyarrow_test_fixtures():
+    script = (Path(__file__).resolve().parents[3] / "scripts" / "build_windows_installer.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert 'Join-Path $desktopBackend "_internal\\pyarrow\\tests"' in script
+    assert 'Remove-Item -LiteralPath $pyarrowTestData -Recurse -Force' in script
+
+
 def test_restart_script_preserves_desktop_mode_and_does_not_probe_auth_only_capability():
     root = Path(__file__).resolve().parents[3]
     restart_script = (root / "scripts" / "restart_backend.ps1").read_text(encoding="utf-8")
