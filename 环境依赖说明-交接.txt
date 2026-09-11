@@ -330,7 +330,7 @@ Windows EXE 打包：
 十三、干净电脑验证记录与 GitHub 交付门槛
 -------------------------------------------
 
-2026-09-11 在本机建立了一个不复用现有运行状态的临时副本进行验证。副本排除了 .git、.venv、venv、node_modules、.env、数据库、日志、work、outputs、build 和交付物，仅恢复了源码需要的 data/templates。
+2026-09-11 已从 GitHub 的 codex/company-handoff-20260911 分支完成全新克隆，不复用现有开发目录的 .git、.venv、venv、node_modules、.env、数据库、日志、work、outputs、build 或浏览器状态。运行时必需的 data/templates/builtin.json 已作为版本文件随分支交付。
 
 已经验证通过：
 - setup_windows.ps1 从零创建 .venv；
@@ -349,12 +349,12 @@ Windows EXE 打包：
 - 1 项是当前 overlay preview 行为断言不一致，需要维护者单独修复或确认测试预期；
 - 常规用户只执行 start.bat 时不安装 requirements-dev.txt，这不阻止普通启动，但二开验收时必须额外安装开发依赖。
 
-最重要的 GitHub 风险：当前工作区分支 feature/brand-emphasis-style 比 GitHub 同名远端分支多 60 个本地提交，并且还有交付准备修改。朋友直接从 GitHub 拉取时，拿到的不是当前电脑这份源码，因此不能把“GitHub 拉取后可运行”视为已验收。
+本次 GitHub 交付使用 codex/company-handoff-20260911 分支，已从该分支全新克隆并通过环境安装与启动检查。不要再使用旧的 feature/brand-emphasis-style 远端分支。
 
 公司密钥的读取边界：公司电脑如果已经在 Windows 系统环境变量或用户环境变量中配置了公司凭据，启动脚本会优先保留这些非空变量；项目目录里的 `.env` 只作为没有配置时的回退。源码交付包不包含开发机 `.env`、`.env.production` 或 `.streamlit/secrets.toml`，因此“安装后直接用”依赖公司环境变量名称与 `.env.example` / 密钥边界清单一致，不能依赖我电脑上的个人配置。
 
-交付前必须二选一：
-1. 将经过最终验收的源码、测试、脚本和资源提交到公司指定的 release 分支并推送，再从该远端分支做一次全新克隆验收；
-2. 直接交付 `VideoInsight-source-handoff-company-env-2026-09-11.zip`，并在 ZIP 中保留 start.bat、requirements 文件、package-lock.json、.env.example、环境依赖说明和交接文档；旧的 `VideoInsight-company-configured-handoff-2026-09-11.zip` 不得交付。
+当前可交付两种等价入口：
+1. 从 codex/company-handoff-20260911 分支全新克隆；
+2. 直接交付 `VideoInsight-source-handoff-company-env-2026-09-11.zip`，并同时交付包外 SHA256 记录。ZIP 中保留 start.bat、requirements 文件、package-lock.json、.env.example、data/templates/builtin.json、环境依赖说明和交接文档；旧的 `VideoInsight-company-configured-handoff-2026-09-11.zip` 不得交付。
 
 无论选择哪一种，都要在客户电脑上完成一次真实安装验收：双击 start.bat、确认前端页面、确认 /health、确认 FFmpeg、确认核心业务页面，再把验收电脑的系统版本、安装目录和结果记录下来。没有这一步，只能说“本机干净副本已通过”，不能承诺客户电脑必然通过。

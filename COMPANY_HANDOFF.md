@@ -8,15 +8,15 @@
 
 此前生成的 `VideoInsight-company-configured-handoff-2026-09-11.zip` 曾包含本机配置文件，已标记为**不可交付**；不要把它上传 GitHub 或发给客户。
 
-当前工作区是一个仍有少量交付准备改动的开发快照：
+当前交付源是已经推送的脱敏交接分支：
 
-- 分支：`feature/brand-emphasis-style`
-- 当前提交：`fa9fff8a0a85`
-- 相对 GitHub 同名远端分支：本地多 60 个提交
-- 工作区状态：8 条交付准备变更（交接文档、启动脚本、扫描器、撤销旧包和新源码包/哈希记录）
-- 本机具备：Python 3.12.3、Node.js 24.15.0、npm 11.12.1、FFmpeg 8.1.2
+- 分支：`codex/company-handoff-20260911`
+- 交付提交：以该分支远端 `HEAD` 为准；接收方应先记录 `git rev-parse HEAD`
+- 交付分支工作区：已验证为干净
+- 运行资源：已显式纳入 `data/templates/builtin.json`，不依赖开发机被忽略的本地目录
+- 交付包：源码 ZIP 与包外 SHA256 记录同步更新
 
-因此这两个包都适合“源码接手、继续维护和本地预览”，不应被描述为已经完成正式发布验收的安装包。公司若要正式销售或部署，应先建立公司的代码仓库、凭据保管和发布版本，再做一次独立验收。
+这份版本适合“源码接手、继续维护和二开”。它不应被描述为已经完成公司具体电脑、真实供应商账号和正式生产环境的最终验收；公司仍应按本文档做一次独立验收。
 
 ## 2. 软件做什么
 
@@ -857,7 +857,7 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 
 ### 21.1 本次已验证的范围
 
-2026-09-11 已在本机创建临时干净副本，排除现有 `.git`、`.venv`、`venv`、`node_modules`、`.env`、数据库、日志、`work/`、`outputs/`、`build/` 和交付物，只恢复源码需要的 `data/templates`，按新电脑首次启动流程执行了环境准备。
+2026-09-11 已从 GitHub 的 `codex/company-handoff-20260911` 分支完成一次全新克隆，未复用原开发目录的 `.git`、`.venv`、`venv`、`node_modules`、`.env`、数据库、日志、`work/`、`outputs/`、`build/` 或浏览器状态。运行时必需的 `data/templates/builtin.json` 已作为版本文件随分支交付。
 
 已确认：
 
@@ -875,11 +875,12 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 
 ### 21.2 当前仍未通过的项目
 
-补装 `requirements-dev.txt` 后运行全量 Python 测试，有 7 项失败：
+补装 `requirements-dev.txt` 后运行全量 Python 测试时，仍有少量历史验收项依赖 `work/` 下的阶段性证据目录，另有旧版 Streamlit 页面和字幕强调断言需要维护者确认；这些不是 React/FastAPI 常规启动依赖，但不能把全量 Python 历史测试写成全绿。二开验收应区分：
 
-- 6 项依赖 `work/` 下的阶段性证据目录或 `.git` 元数据；这些内容不属于普通 GitHub 克隆的运行依赖，但说明全量历史验收不能在干净源码副本直接复现；
-- 1 项为 `overlay preview` 行为断言不一致，需要维护者确认当前实现与测试预期后修复；
-- 常规 `start.bat` 只安装运行依赖，不安装开发测试依赖；二开验收需要另外执行 `python -m pip install -r requirements-dev.txt`。
+- 运行门：先执行 `start.bat`、页面和 `/health` 检查；
+- 常规代码门：执行后端目标模块测试和前端 204 个测试；
+- 历史证据门：只有在另行提供 `work/` 证据目录时才运行对应验收脚本；
+- 开发测试依赖：执行 `python -m pip install -r requirements-dev.txt` 后再运行需要的 Pytest/Ruff 检查。
 
 因此当前结论是：
 
@@ -891,21 +892,15 @@ ssh-keyscan -t ed25519 <host> | ssh-keygen -lf - -E sha256
 
 ### 21.3 GitHub 分支与工作区一致性
 
-当前本地 `feature/brand-emphasis-style` 比 GitHub 同名远端分支多 60 个提交，且工作区还有交付准备变更。朋友直接拉取 GitHub 时，很可能拿到旧版本或另一套资源，这就是“本机能跑、朋友拉下来跑不通”的首要解释。
-
-交付前必须由负责人明确选择：
-
-1. 将最终验收版本提交到公司指定的 release 分支，推送后从该远端分支全新克隆并验收；或
-2. 以当前工作区为源重新制作源码 ZIP，并对 ZIP 计算 SHA256，接收方只使用该 ZIP，不把 GitHub 旧分支当作交付源。
-
-在没有完成提交/推送或源码 ZIP 重制、SHA256 核对和客户电脑实装验收前，不要向客户承诺“GitHub 拉取即可运行”，也不要把当前本地分支名当作正式交付版本。
+本次已完成“提交、推送、全新 GitHub 克隆、依赖安装和启动检查”。公司接收时必须固定使用 `codex/company-handoff-20260911` 分支或同一提交的源码 ZIP，不要再从旧的 `feature/brand-emphasis-style` 远端分支取代码。完成公司电脑实装验收前，仍不要承诺所有网络、杀毒软件策略和供应商账号环境都无差异。
 
 ### 21.4 公司电脑首次验收表
 
 - [ ] 记录公司电脑 Windows 版本、CPU、内存、磁盘空间和网络限制；
 - [ ] 安装或确认 Python 3.12+、Node.js 18+、PowerShell、FFmpeg/FFprobe；
-- [ ] 使用最终 release 分支或最终源码 ZIP，不使用当前旧远端分支；
+- [ ] 使用 `codex/company-handoff-20260911` 或最终源码 ZIP，不使用旧远端分支；
 - [ ] 确认源码中只有 `.env.example`，没有个人 `.env`、数据库、日志、浏览器目录和 SSH 私钥；
+- [ ] 确认 `data/templates/builtin.json` 存在，模板页不依赖开发机目录；
 - [ ] 双击 `start.bat`，首次安装完成且没有报错；
 - [ ] `http://localhost:1001` 页面可打开；
 - [ ] `http://localhost:2001/health` 返回正常；
