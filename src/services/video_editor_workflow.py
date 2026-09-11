@@ -18619,32 +18619,45 @@ class VideoEditorWorkflowService:
                 task.outputs.get("requested_pipeline") == "adaptive_fine_cut_v1"
                 or task.outputs.get("provider_mode") == _LOCAL_RENDER_MODE
             )
-            if not quality_report["passed"] and strict_local_quality:
-                failed_checks = [
-                    key for key, passed in quality_report["checks"].items() if not passed
-                ]
-                if not quality_report["media_integrity_passed"]:
-                    failed_checks.append("media_integrity")
-                if not quality_report["subtitle_sync_passed"]:
-                    failed_checks.append("subtitle_sync")
-                if not transcript_timing_passed:
-                    failed_checks.append("subtitle_word_timing")
-                    timing = quality_report.get("transcript_timing_gate") or {}
-                    quality_report["failure_code"] = (
-                        "SUBTITLE_WORD_TIMING_FAILED"
-                    )
-                    quality_report["failure_detail"] = {
-                        "word_p95_ms": timing.get("word_p95_ms"),
-                        "mapping_error_frames": timing.get("mapping_error_frames"),
-                        "matched_cue_count": timing.get("matched_cue_count"),
-                        "unmatched_cue_count": timing.get("unmatched_cue_count"),
-                    }
-                if not quality_report["visual_release_passed"]:
-                    failed_checks.append("visual_release")
-                if not quality_report["creative_passed"]:
-                    failed_checks.append("creative")
-                if not publish_rights_gate_passed:
-                    failed_checks.append("publish_rights")
+            # 交付口径调整：本机导出只产出草稿，成片的画面丰富度与素材授权改由
+            # 公司侧负责，因此 visual_release / creative / publish_rights 三项
+            # 不再阻断本机导出。
+            #
+            # 这三项仍会照常计算、照常写进 quality_report，publish_claim_allowed
+            #（以及下游的 publish_allowed）也不会因此变成 True：本机产物依旧不能
+            # 被当成"可发布"，只是不再让用户连草稿文件都拿不到。
+            # 字幕与音画完整性（media_integrity / subtitle_sync /
+            # subtitle_word_timing 以及基础 checks）仍然是硬门，保持不变。
+            failed_checks = [
+                key for key, passed in quality_report["checks"].items() if not passed
+            ]
+            if not quality_report["media_integrity_passed"]:
+                failed_checks.append("media_integrity")
+            if not quality_report["subtitle_sync_passed"]:
+                failed_checks.append("subtitle_sync")
+            if not transcript_timing_passed:
+                failed_checks.append("subtitle_word_timing")
+                timing = quality_report.get("transcript_timing_gate") or {}
+                quality_report["failure_code"] = (
+                    "SUBTITLE_WORD_TIMING_FAILED"
+                )
+                quality_report["failure_detail"] = {
+                    "word_p95_ms": timing.get("word_p95_ms"),
+                    "mapping_error_frames": timing.get("mapping_error_frames"),
+                    "matched_cue_count": timing.get("matched_cue_count"),
+                    "unmatched_cue_count": timing.get("unmatched_cue_count"),
+                }
+            quality_report["draft_export_advisory_failures"] = [
+                name
+                for name, passed in (
+                    ("visual_release", quality_report["visual_release_passed"]),
+                    ("creative", quality_report["creative_passed"]),
+                    ("publish_rights", publish_rights_gate_passed),
+                )
+                if not passed
+            ]
+            quality_report["draft_export_passed"] = bool(not failed_checks)
+            if failed_checks and strict_local_quality:
                 failed_checks = list(dict.fromkeys(failed_checks))
                 # Preserve the computed gate details on failed local renders;
                 # otherwise a subtitle/EDL rejection leaves only a generic
@@ -20287,7 +20300,14 @@ class VideoEditorWorkflowService:
                             task.outputs.get("requested_pipeline") == "adaptive_fine_cut_v1"
                             or task.outputs.get("provider_mode") == _LOCAL_RENDER_MODE
                         )
-                        if local_quality.get("passed") is True or not strict_local_quality:
+                        # 用草稿口径判定：visual_release / creative /
+                        # publish_rights 已不再阻断本机导出，这里必须保持一致，
+                        # 否则轮询路径会把已经导出的草稿又标回 failed。
+                        draft_export_passed = local_quality.get("draft_export_passed")
+                        if draft_export_passed is None:
+                            # 兼容改动之前生成的旧报告。
+                            draft_export_passed = local_quality.get("passed") is True
+                        if draft_export_passed or not strict_local_quality:
                             updated = item.model_copy(
                                 update={
                                     "status": "awaiting_output_confirmation",
