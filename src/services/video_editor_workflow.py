@@ -6635,14 +6635,14 @@ class VideoEditorWorkflowService:
         )
 
         # 演示提供方只能生成本地体验方案，不调用付费供应商，也绝不能扣积分。
-        # 服务器控制层模式下，正式提供方才先在公司服务器扣费再上传素材。
+        # 服务器控制层模式下，正式提供方才先在远端服务器扣费再上传素材。
         if bool(capability["is_mock"]):
             pass
         elif bool(getattr(providers, "billing_centrally_managed", False)):
             authorize_cost = getattr(providers, "authorize_cost", None)
             if not callable(authorize_cost):
                 self.repository.delete_video_editor_operation(idempotency_key)
-                raise VideoEditorWorkflowError("公司云端计费服务暂不可用。")
+                raise VideoEditorWorkflowError("云端计费服务暂不可用。")
             try:
                 authorization = authorize_cost(
                     batch_id=batch.batch_id,

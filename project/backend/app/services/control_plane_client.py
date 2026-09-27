@@ -214,7 +214,7 @@ def _verify_setting() -> bool | str:
         return True
     path = Path(configured).expanduser().resolve()
     if not path.is_file():
-        raise ValueError("公司服务 CA 证书文件不存在。")
+        raise ValueError("服务端 CA 证书文件不存在。")
     return str(path)
 
 

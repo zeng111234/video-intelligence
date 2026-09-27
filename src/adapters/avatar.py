@@ -63,7 +63,7 @@ def _default_file_upload_transport(
             )
     except httpx.HTTPError as exc:
         raise AvatarProviderError(
-            "公司素材上传连接失败，结果未确认，请勿直接重复提交。",
+            "素材上传连接失败，结果未确认，请勿直接重复提交。",
             outcome_unknown=True,
         ) from exc
 
@@ -257,7 +257,7 @@ class InternalAvatarProvider:
         if missing:
             return AvatarCapability(
                 provider_name="company_internal_avatar",
-                display_name="公司数字人服务",
+                display_name="云端数字人服务",
                 mode=ProviderMode.SANDBOX,
                 enabled=False,
                 permission_status="configuration_missing",
@@ -1297,7 +1297,7 @@ class BaiduXilingAvatarProvider:
 
 
 class ShuyingLegacyAvatarProvider:
-    """数影公司旧网关适配器：云 TTS/上传后用 api_code 合成并查询视频。"""
+    """上游服务旧网关适配器：云 TTS/上传后用 api_code 合成并查询视频。"""
 
     def __init__(
         self,
@@ -1554,7 +1554,7 @@ class ShuyingLegacyAvatarProvider:
         missing = self._missing_configuration()
         return AvatarCapability(
             provider_name="shuying_legacy_cloud",
-            display_name="公司数影云数字人",
+            display_name="云端数字人服务",
             mode=ProviderMode.PRODUCTION,
             enabled=not missing,
             permission_status="authorized" if not missing else "configuration_missing",
@@ -1619,7 +1619,7 @@ class ShuyingLegacyAvatarProvider:
         self._ensure_configured()
         if not self._can_train_avatar():
             raise AvatarProviderError(
-                "公司云形象训练尚未配置素材上传线路。",
+                "云形象训练尚未配置素材上传线路。",
                 kind=ProviderErrorKind.AUTHORIZATION,
             )
         video_url = self._upload_training_file(
@@ -1637,7 +1637,7 @@ class ShuyingLegacyAvatarProvider:
             str(data.get("id") or "").strip() if isinstance(data, dict) else ""
         )
         if not provider_id:
-            raise AvatarProviderError("公司云形象训练未返回模型编号。")
+            raise AvatarProviderError("云形象训练未返回模型编号。")
         asset = AvatarAsset(
             asset_id=f"shuying-avatar-{provider_id}",
             kind=AvatarAssetKind.AVATAR,
@@ -1646,7 +1646,7 @@ class ShuyingLegacyAvatarProvider:
             preview_type="video",
             authorized=True,
             status="training",
-            status_message="公司云端正在训练形象。",
+            status_message="云端正在训练形象。",
             source_type="custom",
         )
         self._upsert_custom_asset(asset, provider_asset_id=provider_id)
@@ -1700,7 +1700,7 @@ class ShuyingLegacyAvatarProvider:
             preview_type="audio",
             authorized=True,
             status="training",
-            status_message="公司云端正在训练声音。",
+            status_message="云端正在训练声音。",
             source_type="custom_clone",
         )
         self._upsert_custom_asset(
@@ -1997,7 +1997,7 @@ class ShuyingLegacyAvatarProvider:
         return {
             "ready": "训练完成，可用于数字人生成。",
             "failed": "供应商训练失败或审核未通过。",
-        }.get(status, "公司云端正在训练，请稍后刷新。")
+        }.get(status, "云端正在训练，请稍后刷新。")
 
     def _upload_training_file(
         self,
@@ -2009,26 +2009,26 @@ class ShuyingLegacyAvatarProvider:
         allowed_hosts: set[str],
     ) -> str:
         if not self._is_safe_upload_url(upload_url):
-            raise AvatarProviderError("公司素材上传地址必须是标准 HTTPS 地址。")
+            raise AvatarProviderError("素材上传地址必须是标准 HTTPS 地址。")
         hostname = urlsplit(upload_url).hostname
         if not hostname or hostname.casefold() not in allowed_hosts:
-            raise AvatarProviderError("公司素材上传地址不在允许的供应商域名中。")
+            raise AvatarProviderError("素材上传地址不在允许的供应商域名中。")
         raw, _ = self.file_upload_transport(
             upload_url, filename, mime_type, path, self.timeout_seconds
         )
         try:
             envelope = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AvatarProviderError("公司素材上传接口返回了无效 JSON。") from exc
+            raise AvatarProviderError("素材上传接口返回了无效 JSON。") from exc
         try:
             success = isinstance(envelope, dict) and int(envelope.get("code", 0)) == 1
         except (TypeError, ValueError):
             success = False
         if not success:
             raise AvatarProviderError(
-                str(envelope.get("msg") or "公司素材上传失败。")
+                str(envelope.get("msg") or "素材上传失败。")
                 if isinstance(envelope, dict)
-                else "公司素材上传响应格式不正确。"
+                else "素材上传响应格式不正确。"
             )
         result_url = self._upgrade_to_https(str(envelope.get("path") or "").strip())
         result_host = urlsplit(result_url).hostname
@@ -2037,7 +2037,7 @@ class ShuyingLegacyAvatarProvider:
             or not result_host
             or result_host.casefold() not in allowed_hosts
         ):
-            raise AvatarProviderError("公司素材上传结果不在允许的供应商域名中。")
+            raise AvatarProviderError("素材上传结果不在允许的供应商域名中。")
         return result_url
 
     def submit(self, request: AvatarSubmitRequest) -> AvatarJobSnapshot:
@@ -2078,7 +2078,7 @@ class ShuyingLegacyAvatarProvider:
                 else ""
             )
             if not audio_url:
-                raise AvatarProviderError("公司数影网关未返回合成音频地址。")
+                raise AvatarProviderError("云网关未返回合成音频地址。")
 
         return self._submit_video(request, audio_url)
 
@@ -2154,14 +2154,14 @@ class ShuyingLegacyAvatarProvider:
             else ""
         )
         if not provider_job_id:
-            raise AvatarProviderError("公司数影网关未返回视频任务编号。")
+            raise AvatarProviderError("云网关未返回视频任务编号。")
 
         snapshot = AvatarJobSnapshot(
             job_id=provider_job_id,
             idempotency_key=request.idempotency_key,
             status=AvatarProviderStatus.QUEUED,
             progress=5,
-            stage="公司云端排队中",
+            stage="云端排队中",
             provider_job_id=provider_job_id,
             estimated_cost_cny=self.estimated_cost_cny,
             estimated_seconds=self.estimated_seconds,
@@ -2258,28 +2258,28 @@ class ShuyingLegacyAvatarProvider:
         try:
             envelope = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AvatarProviderError("公司音频上传接口返回了无效 JSON。") from exc
+            raise AvatarProviderError("音频上传接口返回了无效 JSON。") from exc
         try:
             success = isinstance(envelope, dict) and int(envelope.get("code", 0)) == 1
         except (TypeError, ValueError):
             success = False
         if not success:
             message = (
-                str(envelope.get("msg") or "公司音频上传失败。")
+                str(envelope.get("msg") or "音频上传失败。")
                 if isinstance(envelope, dict)
-                else "公司音频上传响应格式不正确。"
+                else "音频上传响应格式不正确。"
             )
             raise AvatarProviderError(message)
         audio_url = self._upgrade_to_https(str(envelope.get("path") or "").strip())
         if not self._is_safe_https_url(audio_url, allow_path=True):
             raise AvatarProviderError(
-                "公司音频上传结果必须是标准 HTTPS 地址。",
+                "音频上传结果必须是标准 HTTPS 地址。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         hostname = urlsplit(audio_url).hostname
         if not hostname or hostname.casefold() not in self.audio_allowed_hosts:
             raise AvatarProviderError(
-                "公司音频上传结果不在允许的供应商域名中。",
+                "音频上传结果不在允许的供应商域名中。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         return audio_url
@@ -2339,7 +2339,7 @@ class ShuyingLegacyAvatarProvider:
         )
         data = response.get("data")
         if not isinstance(data, dict):
-            raise AvatarProviderError("公司数影网关状态响应缺少 data。")
+            raise AvatarProviderError("云网关状态响应缺少 data。")
         try:
             provider_status = int(data.get("synthesisStatus", 0))
         except (TypeError, ValueError):
@@ -2355,7 +2355,7 @@ class ShuyingLegacyAvatarProvider:
                 idempotency_key=idempotency_key,
                 status=AvatarProviderStatus.SUCCEEDED,
                 progress=100,
-                stage="公司云端生成成功",
+                stage="云端生成成功",
                 provider_job_id=job_id,
                 estimated_cost_cny=self.estimated_cost_cny,
                 estimated_seconds=settled_seconds,
@@ -2363,12 +2363,12 @@ class ShuyingLegacyAvatarProvider:
                 result_size_bytes=self._optional_positive_int(data.get("videoSize")),
             )
         terminal_statuses = {
-            -1: (AvatarProviderStatus.FAILED, "公司云端生成失败"),
-            4: (AvatarProviderStatus.FAILED, "公司云端合成失败"),
-            5: (AvatarProviderStatus.FAILED, "公司云端任务已归档"),
-            6: (AvatarProviderStatus.CANCELLED, "公司云端任务已取消"),
-            7: (AvatarProviderStatus.FAILED, "公司云端生成失败"),
-            8: (AvatarProviderStatus.FAILED, "公司云端生成失败"),
+            -1: (AvatarProviderStatus.FAILED, "云端生成失败"),
+            4: (AvatarProviderStatus.FAILED, "云端合成失败"),
+            5: (AvatarProviderStatus.FAILED, "云端任务已归档"),
+            6: (AvatarProviderStatus.CANCELLED, "云端任务已取消"),
+            7: (AvatarProviderStatus.FAILED, "云端生成失败"),
+            8: (AvatarProviderStatus.FAILED, "云端生成失败"),
         }
         terminal = terminal_statuses.get(provider_status)
         if terminal is not None:
@@ -2396,7 +2396,7 @@ class ShuyingLegacyAvatarProvider:
             idempotency_key=idempotency_key,
             status=AvatarProviderStatus.RUNNING,
             progress=70 if provider_status == 2 else 30,
-            stage="公司云端渲染中" if provider_status == 2 else "公司云端处理中",
+            stage="云端渲染中" if provider_status == 2 else "云端处理中",
             provider_job_id=job_id,
             estimated_cost_cny=self.estimated_cost_cny,
             estimated_seconds=self.estimated_seconds,
@@ -2410,20 +2410,20 @@ class ShuyingLegacyAvatarProvider:
         if not url:
             snapshot = self.get_job(job_id)
             if snapshot.status != AvatarProviderStatus.SUCCEEDED:
-                raise AvatarProviderError("公司数影任务尚未成功，不能下载结果。")
+                raise AvatarProviderError("云网关任务尚未成功，不能下载结果。")
             url = self.result_urls.get(job_id)
         if not url:
-            raise AvatarProviderError("公司数影网关未返回视频下载地址。")
+            raise AvatarProviderError("云网关未返回视频下载地址。")
 
         if not self._is_safe_https_url(url, allow_path=True):
             raise AvatarProviderError(
-                "公司数影结果地址必须是标准 HTTPS 地址。",
+                "云网关结果地址必须是标准 HTTPS 地址。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         parts = urlsplit(url)
         if parts.hostname.casefold() not in self.result_allowed_hosts:
             raise AvatarProviderError(
-                "公司数影结果地址不在允许的供应商域名中。",
+                "云网关结果地址不在允许的供应商域名中。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         payload, mime_type = self.download_transport(
@@ -2435,7 +2435,7 @@ class ShuyingLegacyAvatarProvider:
         )
         if len(payload) > MAX_AVATAR_DOWNLOAD_BYTES:
             raise AvatarProviderError(
-                "公司数影结果超过 100 MB 安全限制。",
+                "云网关结果超过 100 MB 安全限制。",
                 kind=ProviderErrorKind.VALIDATION,
             )
         return payload, mime_type
@@ -2444,7 +2444,7 @@ class ShuyingLegacyAvatarProvider:
         missing = self._missing_configuration()
         if missing:
             raise AvatarProviderError(
-                "公司数影云数字人尚未配置：" + "、".join(missing),
+                "云端数字人服务尚未配置：" + "、".join(missing),
                 kind=ProviderErrorKind.AUTHORIZATION,
             )
 
@@ -2479,9 +2479,9 @@ class ShuyingLegacyAvatarProvider:
         try:
             envelope = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AvatarProviderError("公司数影网关返回了无效 JSON。") from exc
+            raise AvatarProviderError("云网关返回了无效 JSON。") from exc
         if not isinstance(envelope, dict):
-            raise AvatarProviderError("公司数影网关响应格式不正确。")
+            raise AvatarProviderError("云网关响应格式不正确。")
         response_data = envelope.get("data")
         try:
             response_code = int(envelope.get("code", 0))
@@ -2507,7 +2507,7 @@ class ShuyingLegacyAvatarProvider:
             )
             if not message:
                 code_label = "未知" if response_code is None else str(response_code)
-                message = f"公司数影网关拒绝了制作请求，但没有说明原因（返回码 {code_label}）。"
+                message = f"云网关拒绝了制作请求，但没有说明原因（返回码 {code_label}）。"
             kind = (
                 ProviderErrorKind.AUTHORIZATION
                 if any(
@@ -2553,9 +2553,9 @@ class ShuyingLegacyAvatarProvider:
         try:
             envelope = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise AvatarProviderError("公司声音线路返回了无效 JSON。") from exc
+            raise AvatarProviderError("云端语音线路返回了无效 JSON。") from exc
         if not isinstance(envelope, dict):
-            raise AvatarProviderError("公司声音线路响应格式不正确。")
+            raise AvatarProviderError("云端语音线路响应格式不正确。")
         try:
             code = int(envelope.get("code"))
         except (TypeError, ValueError):
@@ -2565,7 +2565,7 @@ class ShuyingLegacyAvatarProvider:
             success = True
         if not success:
             raise AvatarProviderError(
-                str(envelope.get("msg") or "公司声音线路请求失败。"),
+                str(envelope.get("msg") or "云端语音线路请求失败。"),
                 kind=(
                     ProviderErrorKind.AUTHORIZATION
                     if any(

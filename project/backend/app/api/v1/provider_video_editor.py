@@ -270,7 +270,7 @@ def authorize(
         raise HTTPException(status_code=400, detail="本次剪辑请求标识无效。")
     capability = get_cloud_capability(runtime.configuration)
     if not capability.live_ready:
-        raise HTTPException(status_code=503, detail="公司云端剪辑服务尚未配置完成。")
+        raise HTTPException(status_code=503, detail="云端剪辑服务尚未配置完成。")
     try:
         client_quote = CostQuote.model_validate(body.quote)
         quote = _authoritative_quote(runtime, client_quote)

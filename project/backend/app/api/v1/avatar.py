@@ -241,7 +241,7 @@ def train_cloud_avatar(
 ):
     capability = service.capabilities()
     if not capability.supports_cloud_avatar_training:
-        raise HTTPException(status_code=503, detail="公司云形象训练线路尚未配置。")
+        raise HTTPException(status_code=503, detail="云形象训练线路尚未配置。")
     if not rights_confirmed:
         raise HTTPException(status_code=400, detail="必须确认拥有训练视频中的肖像授权。")
     display_name = name.strip()
@@ -286,7 +286,7 @@ def train_cloud_voice(
 ):
     capability = service.capabilities()
     if not capability.supports_voice_sample_upload:
-        raise HTTPException(status_code=503, detail="公司云数字人服务尚未配置。")
+        raise HTTPException(status_code=503, detail="云数字人服务尚未配置。")
     if not rights_confirmed:
         raise HTTPException(status_code=400, detail="必须确认拥有声音样本的使用授权。")
     display_name = name.strip()

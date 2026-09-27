@@ -592,7 +592,7 @@ class TranscriptionService:
                 task = task.model_copy(
                     update={
                         "status": TaskStatus.RUNNING,
-                        "stage": "正在上传到公司云端",
+                        "stage": "正在上传到云端",
                         "progress": 20,
                         "provider_status": "uploading",
                         "updated_at": datetime.now().astimezone(),

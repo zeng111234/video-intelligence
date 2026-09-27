@@ -792,7 +792,7 @@ export default function TranscriptionPage() {
                         <Checkbox checked={fileUploadConfirmed} onChange={(event) => setFileUploadConfirmed(event.target.checked)}>
                           {isSandboxAsr
                             ? "我确认拥有该文件的处理权；本地演示不调用真实云服务，也不扣积分。"
-                            : `我确认拥有该文件的处理权，并同意本次公司云端转写按实际时长收费，单条最多 ${cnyToCredits(0.2)} 积分。`}
+                            : `我确认拥有该文件的处理权，并同意本次云端转写按实际时长收费，单条最多 ${cnyToCredits(0.2)} 积分。`}
                         </Checkbox>
                         <Button
                           type="primary"

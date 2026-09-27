@@ -93,16 +93,16 @@ class _RemoteClient:
                     if response.status_code not in {502, 503} or attempt == 1:
                         break
         except httpx.HTTPError as exc:
-            raise RemoteVideoEditorError("暂时无法连接公司云端剪辑服务。") from exc
+            raise RemoteVideoEditorError("暂时无法连接云端剪辑服务。") from exc
         assert response is not None
         if not response.is_success:
-            raise RemoteVideoEditorError(self.message(response, "公司云端剪辑服务暂不可用。"))
+            raise RemoteVideoEditorError(self.message(response, "云端剪辑服务暂不可用。"))
         try:
             payload = response.json()
         except ValueError as exc:
-            raise RemoteVideoEditorError("公司云端剪辑服务返回了无效结果。") from exc
+            raise RemoteVideoEditorError("云端剪辑服务返回了无效结果。") from exc
         if not isinstance(payload, dict):
-            raise RemoteVideoEditorError("公司云端剪辑服务返回了无效结果。")
+            raise RemoteVideoEditorError("云端剪辑服务返回了无效结果。")
         return payload
 
     def post(
@@ -140,20 +140,20 @@ class _RemoteClient:
                     break
         if response is None:
             raise RemoteVideoEditorError(
-                "公司云端剪辑连接失败，结果暂时无法确认；系统不会自动重复提交。",
+                "云端剪辑连接失败，结果暂时无法确认；系统不会自动重复提交。",
                 outcome_unknown=True,
             ) from last_error
         if not response.is_success:
             raise RemoteVideoEditorError(
-                self.message(response, "公司云端剪辑操作失败。"),
+                self.message(response, "云端剪辑操作失败。"),
                 outcome_unknown=response.status_code in {409, 500, 502, 503, 504},
             )
         try:
             result = response.json()
         except ValueError as exc:
-            raise RemoteVideoEditorError("公司云端剪辑服务返回了无效结果。") from exc
+            raise RemoteVideoEditorError("云端剪辑服务返回了无效结果。") from exc
         if not isinstance(result, dict):
-            raise RemoteVideoEditorError("公司云端剪辑服务返回了无效结果。")
+            raise RemoteVideoEditorError("云端剪辑服务返回了无效结果。")
         return result
 
 
@@ -221,18 +221,18 @@ class RemoteCloudObjectStore:
                     break
         if response is None:
             raise RemoteVideoEditorError(
-                "公司素材上传结果暂时无法确认；系统不会自动重复提交。",
+                "素材上传结果暂时无法确认；系统不会自动重复提交。",
                 outcome_unknown=True,
             ) from last_error
         if not response.is_success:
             raise RemoteVideoEditorError(
-                self.client.message(response, "公司素材上传失败。"),
+                self.client.message(response, "素材上传失败。"),
                 outcome_unknown=response.status_code in {409, 500, 502, 503, 504},
             )
         try:
             return CloudAsset.model_validate(response.json())
         except ValueError as exc:
-            raise RemoteVideoEditorError("公司素材服务返回了无效结果。") from exc
+            raise RemoteVideoEditorError("素材服务返回了无效结果。") from exc
 
     def presign_get_url(
         self,
@@ -255,7 +255,7 @@ class RemoteCloudObjectStore:
         )
         url = str(result.get("url") or "").strip()
         if not url.startswith("https://"):
-            raise RemoteVideoEditorError("公司云成片服务返回了无效下载地址。")
+            raise RemoteVideoEditorError("云成片服务返回了无效下载地址。")
         del expires_seconds  # The server owns and caps the signed URL lifetime.
         return url
 
@@ -385,7 +385,7 @@ class RemoteVideoEditorBundle:
                 "provider_name": "company_cloud_video_editor",
                 "enabled": False,
                 "live_ready": False,
-                "missing_configuration": ["公司云端剪辑服务暂不可用"],
+                "missing_configuration": ["云端剪辑服务暂不可用"],
                 "is_mock": False,
             }
 

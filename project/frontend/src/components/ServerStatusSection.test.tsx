@@ -59,9 +59,9 @@ describe("ServerStatusSection", () => {
     render(<ServerStatusSection />);
 
     await waitFor(() =>
-      expect(screen.getByText("本机功能可用 · 公司服务器待配置")).toBeTruthy(),
+      expect(screen.getByText("本机功能可用 · 远端服务器待配置")).toBeTruthy(),
     );
     expect(screen.getByText("AI 文案 · 待服务器")).toBeTruthy();
-    expect(screen.getByText("收费功能将在公司服务器配置后开启")).toBeTruthy();
+    expect(screen.getByText("收费功能将在远端服务器配置后开启")).toBeTruthy();
   });
 });

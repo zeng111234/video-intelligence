@@ -640,7 +640,7 @@ class AvatarAsset(BaseModel):
     status: str = "ready"
     status_message: str | None = None
     source_type: str = "built_in"
-    # 只有公司服务器显式标记的已授权资产才可跨客户复用。
+    # 只有远端服务器显式标记的已授权资产才可跨客户复用。
     shared: bool = False
 
 

@@ -98,7 +98,7 @@ def _customer_capability(provider) -> AvatarCapability:
             update={
                 "enabled": False,
                 "permission_status": "production_required",
-                "missing_configuration": ["公司数字人正式线路尚未配置"],
+                "missing_configuration": ["云端数字人正式线路尚未配置"],
             }
         )
     # 数字人费用取决于本次文案和最终成片时长，能力接口不能再用固定 45 秒
@@ -111,7 +111,7 @@ def _customer_capability(provider) -> AvatarCapability:
 def _require_live(provider) -> AvatarCapability:
     capability = _customer_capability(provider)
     if not capability.enabled:
-        raise HTTPException(status_code=503, detail="公司数字人服务尚未配置完成。")
+        raise HTTPException(status_code=503, detail="云端数字人服务尚未配置完成。")
     if get_price("avatar_per_minute_cny") <= 0:
         raise HTTPException(status_code=503, detail="数字人生成价格尚未配置。")
     return capability
@@ -472,7 +472,7 @@ async def train_avatar(
     if not capability.supports_cloud_avatar_training or not isinstance(
         provider, ShuyingLegacyAvatarProvider
     ):
-        raise HTTPException(status_code=503, detail="公司云形象训练线路尚未配置。")
+        raise HTTPException(status_code=503, detail="云形象训练线路尚未配置。")
     if not rights_confirmed or not name.strip():
         raise HTTPException(status_code=400, detail="请填写名称并确认肖像授权。")
     path, digest = await _stage_upload(

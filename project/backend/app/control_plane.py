@@ -75,7 +75,7 @@ async def lifespan(_application: FastAPI):
 
 
 app = FastAPI(
-    title="VideoInsight 公司控制层",
+    title="VideoInsight 服务端控制层",
     version=RELEASE_VERSION,
     docs_url=None,
     redoc_url=None,
@@ -331,7 +331,7 @@ def server_status() -> dict[str, object]:
 
     asr = redact_configuration_names(
         safe_capability(lambda: get_server_asr_runtime().capability()),
-        unavailable_message="公司云端转写配置尚未完成",
+        unavailable_message="云端转写配置尚未完成",
     )
     video = redact_configuration_names(
         safe_capability(
@@ -339,7 +339,7 @@ def server_status() -> dict[str, object]:
                 get_server_video_editor_runtime().configuration
             ).model_dump(mode="json")
         ),
-        unavailable_message="公司云端剪辑配置尚未完成",
+        unavailable_message="云端剪辑配置尚未完成",
     )
 
     def avatar_capability() -> dict[str, object]:
@@ -374,7 +374,7 @@ def server_status() -> dict[str, object]:
         }
         return redact_configuration_names(
             capability,
-            unavailable_message="公司数字人配置尚未完成",
+            unavailable_message="云端数字人配置尚未完成",
         )
 
     avatar = safe_capability(avatar_capability)

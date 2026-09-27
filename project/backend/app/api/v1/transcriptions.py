@@ -366,7 +366,7 @@ def get_customer_asr_capabilities(
             "mode": "cloud",
             "is_mock": False,
             "supports_upload": bool(capability.get("enabled")),
-            "description": "公司云端语音识别，提交前需要确认费用。",
+            "description": "云端语音识别，提交前需要确认费用。",
         }
     is_mock = ASR_MODE == ASRMode.SANDBOX
     return {

@@ -53,7 +53,7 @@ def _require_server_asr_enabled() -> None:
     if not _server_asr_enabled():
         raise HTTPException(
             status_code=503,
-            detail="公司云端转写尚未启用，请联系管理员。",
+            detail="云端转写尚未启用，请联系管理员。",
         )
 
 

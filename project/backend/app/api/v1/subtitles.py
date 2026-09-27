@@ -54,9 +54,9 @@ def subtitle_status(service=Depends(get_transcription_service)):
         enabled = bool(capability["enabled"])
         reason = None
         if not capability["live_ready"]:
-            reason = "公司云识别配置不完整，请联系管理员。"
+            reason = "云识别配置不完整，请联系管理员。"
         elif not capability["billing_authorized"]:
-            reason = "公司云识别费用尚未授权，请管理员到系统设置确认。"
+            reason = "云识别费用尚未授权，请管理员到系统设置确认。"
         return SubtitleStatusResponse(
             whisper_available=enabled,
             version=None,

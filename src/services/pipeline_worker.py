@@ -114,7 +114,7 @@ class PipelineWorker:
                 pass
 
     def tick_once(self) -> None:
-        # 正式桌面端重启后，持久任务会早于客户重新登录被扫描。没有公司
+        # 正式桌面端重启后，持久任务会早于客户重新登录被扫描。没有服务端
         # 会话时必须保持原状态，避免把可恢复任务误判失败或越过发布授权。
         if not self.can_process():
             self._record_processing_wait(self.processing_block_reason())

@@ -124,7 +124,7 @@ class RemoteAvatarProvider:
                         break
         except httpx.HTTPError as exc:
             raise AvatarProviderError(
-                "暂时无法连接公司数字人服务。",
+                "暂时无法连接云端数字人服务。",
                 kind=ProviderErrorKind.CONNECTION,
             ) from exc
         assert response is not None
@@ -132,7 +132,7 @@ class RemoteAvatarProvider:
             return None
         if not response.is_success:
             raise AvatarProviderError(
-                self._message(response, "公司数字人服务暂不可用。"),
+                self._message(response, "云端数字人服务暂不可用。"),
                 kind=self._kind(response.status_code),
             )
         return response
@@ -180,7 +180,7 @@ class RemoteAvatarProvider:
         if not response.is_success:
             unknown = response.status_code in {409, 500, 502, 503, 504}
             raise AvatarProviderError(
-                self._message(response, "公司数字人操作失败。"),
+                self._message(response, "云端数字人操作失败。"),
                 kind=(
                     ProviderErrorKind.OUTCOME_UNKNOWN
                     if unknown
@@ -195,7 +195,7 @@ class RemoteAvatarProvider:
         try:
             return response.json()
         except ValueError as exc:
-            raise AvatarProviderError("公司数字人服务返回了无效结果。") from exc
+            raise AvatarProviderError("云端数字人服务返回了无效结果。") from exc
 
     def capabilities(self) -> AvatarCapability:
         try:
@@ -205,20 +205,20 @@ class RemoteAvatarProvider:
         except AvatarProviderError as exc:
             return AvatarCapability(
                 provider_name="company_cloud_avatar",
-                display_name="公司云数字人",
+                display_name="云数字人",
                 mode=ProviderMode.PRODUCTION,
                 enabled=False,
                 permission_status=f"unavailable_{exc.kind.value}",
-                missing_configuration=[str(exc) or "公司数字人服务暂不可用"],
+                missing_configuration=[str(exc) or "云端数字人服务暂不可用"],
             )
         except ValueError:
             return AvatarCapability(
                 provider_name="company_cloud_avatar",
-                display_name="公司云数字人",
+                display_name="云数字人",
                 mode=ProviderMode.PRODUCTION,
                 enabled=False,
                 permission_status="invalid_capability_response",
-                missing_configuration=["公司数字人服务返回的能力信息无效。"],
+                missing_configuration=["云端数字人服务返回的能力信息无效。"],
             )
 
     def list_assets(self) -> list[AvatarAsset]:
@@ -236,7 +236,7 @@ class RemoteAvatarProvider:
                 )
             ]
         except (TypeError, ValueError) as exc:
-            raise AvatarProviderError("公司数字人素材列表无效。") from exc
+            raise AvatarProviderError("云端数字人素材列表无效。") from exc
 
     def quote(self, *, script_text: str, speech_rate: float) -> AvatarBillingQuote:
         characters = sum(1 for character in script_text if not character.isspace())
@@ -247,7 +247,7 @@ class RemoteAvatarProvider:
         try:
             return AvatarBillingQuote.model_validate(self._json(response))
         except ValueError as exc:
-            raise AvatarProviderError("公司数字人费用预估无效。") from exc
+            raise AvatarProviderError("云端数字人费用预估无效。") from exc
 
     def submit(self, request: AvatarSubmitRequest) -> AvatarJobSnapshot:
         response = self._post(

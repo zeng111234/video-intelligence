@@ -82,7 +82,7 @@ export default function ServerStatusSection() {
             icon={companyConnected ? <CheckCircleOutlined /> : <WarningOutlined />}
             color={companyConnected ? "success" : "warning"}
           >
-            {companyConnected ? "公司服务已连接" : "本机功能可用 · 公司服务器待配置"}
+            {companyConnected ? "公司服务已连接" : "本机功能可用 · 远端服务器待配置"}
           </Tag>
           <Tag color="green">素材发现由本机完成 · 不扣积分</Tag>
           {status &&
@@ -102,7 +102,7 @@ export default function ServerStatusSection() {
               key: "details",
               label: companyConnected
                 ? `${unavailableCount} 项收费能力尚未开启（不影响本地免费功能）`
-                : "收费功能将在公司服务器配置后开启",
+                : "收费功能将在远端服务器配置后开启",
               children: (
                 <Space direction="vertical" size={6}>
                   {CAPABILITIES.filter(({ key }) => !capabilityReady(status[key])).map(

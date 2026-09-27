@@ -655,4 +655,4 @@ finally {
 
 Write-Output "更新文件已准备：$publishedInstaller"
 Write-Output "更新清单已准备：$manifestPath"
-Write-Output "把 deploy/control-plane/updates 同步到公司服务器后，新版才会对客户可见。"
+Write-Output "把 deploy/control-plane/updates 同步到远端服务器后，新版才会对客户可见。"

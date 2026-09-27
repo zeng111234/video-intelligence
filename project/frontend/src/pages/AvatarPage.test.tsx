@@ -102,7 +102,7 @@ describe("AvatarPage avatar library", () => {
     });
     vi.mocked(getAvatarCapabilities).mockResolvedValue({
       provider_name: "shuying_legacy_cloud",
-      display_name: "公司数影云数字人",
+      display_name: "云端数字人服务",
       mode: "production",
       enabled: true,
       permission_status: "authorized",
@@ -201,7 +201,7 @@ describe("AvatarPage avatar library", () => {
     expect(await within(view.container).findByText("形象一")).toBeTruthy();
     expect(view.container.querySelector("img, video, audio")).toBeNull();
     expect(view.container.querySelector(".ant-alert")).toBeNull();
-    expect(within(view.container).queryByText("公司数影云数字人 已可用")).toBeNull();
+    expect(within(view.container).queryByText("云端数字人服务 已可用")).toBeNull();
     expect(within(view.container).queryByText("素材选择")).toBeNull();
 
     const generationRegion = within(view.container).getByRole("region", { name: "生成配置" });
@@ -343,7 +343,7 @@ describe("AvatarPage avatar library", () => {
       authorized: true,
       preview_type: "audio",
       status: "training",
-      status_message: "公司云端正在训练声音。",
+      status_message: "云端正在训练声音。",
       source_type: "custom_clone",
     });
     const view = renderPage();
@@ -383,7 +383,7 @@ describe("AvatarPage avatar library", () => {
   it("explains why cloud-avatar training is unavailable", async () => {
     vi.mocked(getAvatarCapabilities).mockResolvedValueOnce({
       provider_name: "shuying_legacy_cloud",
-      display_name: "公司数影云数字人",
+      display_name: "云端数字人服务",
       mode: "production",
       enabled: true,
       permission_status: "authorized",
@@ -417,7 +417,7 @@ describe("AvatarPage avatar library", () => {
     expect(within(view.container).queryByText("生成方案")).toBeNull();
     expect(within(view.container).queryByText("目标平台")).toBeNull();
     expect(within(view.container).queryByText(/自动发布/)).toBeNull();
-    expect(within(view.container).queryByText("供应商：公司数影云数字人")).toBeNull();
+    expect(within(view.container).queryByText("供应商：云端数字人服务")).toBeNull();
     expect(within(view.container).getByText("按实际成片时长整秒结算")).toBeTruthy();
 
     fireEvent.change(
@@ -444,7 +444,7 @@ describe("AvatarPage avatar library", () => {
   it("blocks a real supplier submission when the task quote is unavailable", async () => {
     vi.mocked(getAvatarCapabilities).mockResolvedValueOnce({
       provider_name: "shuying_legacy_cloud",
-      display_name: "公司数影云数字人",
+      display_name: "云端数字人服务",
       mode: "production",
       enabled: true,
       permission_status: "authorized",

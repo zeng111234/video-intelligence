@@ -249,19 +249,19 @@ class RemoteAliyunASRRuntime:
                 )
         except httpx.HTTPError as exc:
             error = RemoteASRError(
-                "公司素材上传连接失败，结果暂时无法确认；系统不会自动重复提交。"
+                "素材上传连接失败，结果暂时无法确认；系统不会自动重复提交。"
             )
             setattr(error, "outcome_unknown", True)
             raise error from exc
         if not response.is_success:
-            error = RemoteASRError(self._message(response, "公司素材上传失败。"))
+            error = RemoteASRError(self._message(response, "素材上传失败。"))
             if response.status_code in {409, 500, 502, 503, 504}:
                 setattr(error, "outcome_unknown", True)
             raise error
         try:
             return CloudAsset.model_validate(response.json())
         except ValueError as exc:
-            raise RemoteASRError("公司素材服务返回了无效结果。") from exc
+            raise RemoteASRError("素材服务返回了无效结果。") from exc
 
     def submit(self, asset: CloudAsset, *, language: str) -> ProviderJobSnapshot:
         parts = asset.object_key.split("/")
@@ -294,7 +294,7 @@ class RemoteAliyunASRRuntime:
                 )
         except httpx.HTTPError as exc:
             error = RemoteASRError(
-                "公司云端识别提交结果暂时无法确认；系统不会自动重复提交。"
+                "云端识别提交结果暂时无法确认；系统不会自动重复提交。"
             )
             setattr(error, "outcome_unknown", True)
             raise error from exc

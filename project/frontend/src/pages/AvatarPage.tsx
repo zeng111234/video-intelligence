@@ -224,7 +224,7 @@ export default function AvatarPage() {
             if (item === "SHUYING_AVATAR_AVATARS_JSON") return "当前有效数字人 ID";
             if (item === "SHUYING_AVATAR_VOICES_JSON") return "当前有效音色 ID";
             if (item === "SHUYING_AVATAR_RESULT_ALLOWED_HOSTS") return "成片域名白名单";
-            if (item.startsWith("SHUYING_AVATAR_AUDIO_UPLOAD_URL")) return "公司音频上传地址";
+            if (item.startsWith("SHUYING_AVATAR_AUDIO_UPLOAD_URL")) return "音频上传地址";
             if (item === "SHUYING_AVATAR_AUDIO_ALLOWED_HOSTS") return "音频域名白名单";
             if (item === "SHUYING_AVATAR_API_CODE") return "公司接口 Key";
             return item;
@@ -637,7 +637,7 @@ export default function AvatarPage() {
 
   const handleCloudAvatarTraining = useCallback(async (file: File) => {
     if (!supportsCloudAvatarTraining) {
-      toast.warning("公司云形象训练线路尚未配置。");
+      toast.warning("云形象训练线路尚未配置。");
       return false;
     }
     const confirmed = await new Promise<boolean>((resolve) => {
@@ -675,7 +675,7 @@ export default function AvatarPage() {
 
   const handleCloudVoiceTraining = useCallback(async (file: File) => {
     if (!supportsVoiceCloning) {
-      toast.warning("公司云声音训练线路尚未就绪，暂不能提交训练。");
+      toast.warning("云声音训练线路尚未就绪，暂不能提交训练。");
       return false;
     }
     const confirmed = await new Promise<boolean>((resolve) => {

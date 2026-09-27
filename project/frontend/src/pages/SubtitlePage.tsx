@@ -48,7 +48,7 @@ export default function SubtitlePage() {
         rightsHolder.trim(),
         language,
       );
-      message.success("已提交公司云端识别，可在转写工作区查看进度");
+      message.success("已提交云端识别，可在转写工作区查看进度");
       navigate(`/transcription?task=${encodeURIComponent(task.task_id)}`);
     } catch (err) {
       message.error((err as Error).message || "字幕识别失败");
@@ -64,10 +64,10 @@ export default function SubtitlePage() {
           <AudioOutlined style={{ marginRight: 8, color: "var(--primary-600)" }} />
           字幕生成
         </Title>
-        <Text type="secondary">上传已授权视频，由公司云端识别后进入校对工作区；人工确认后可导出 SRT 或 ASS。</Text>
+        <Text type="secondary">上传已授权视频，由云端识别后进入校对工作区；人工确认后可导出 SRT 或 ASS。</Text>
       </div>
 
-      <Card size="small" title={<Space><GlobalOutlined /> 公司云端识别</Space>} extra={<Button size="small" onClick={loadStatus} loading={loadingStatus}>刷新</Button>}>
+      <Card size="small" title={<Space><GlobalOutlined /> 云端识别</Space>} extra={<Button size="small" onClick={loadStatus} loading={loadingStatus}>刷新</Button>}>
         {status ? (
           <Space direction="vertical" size="small" style={{ width: "100%" }}>
             <Space wrap>
@@ -78,7 +78,7 @@ export default function SubtitlePage() {
               <Tag color="blue">不使用客户 CPU</Tag>
             </Space>
             <Text type="secondary">默认模型：{status.default_model}；支持：{status.supported_models.join("、")}；导出：{status.supported_formats.join("、").toUpperCase()}</Text>
-            {!status.whisper_available && <Alert type="warning" showIcon message={status.reason || "公司云端字幕能力不可用"} />}
+            {!status.whisper_available && <Alert type="warning" showIcon message={status.reason || "云端字幕能力不可用"} />}
           </Space>
         ) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="正在加载能力状态" />}
       </Card>

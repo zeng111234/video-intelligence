@@ -140,10 +140,10 @@ def _attach_real_word_timestamps(
 
     The clocks always come from faster-whisper.  Only two recognized-text
     substitutions are allowed for this sample (``以``→``你`` and
-    ``顺应八平``→``数影霸屏``); they are recorded as text normalization rather
+    ``顺应八平``→``霸屏``); they are recorded as text normalization rather
     than silently presented as a fresh ASR transcript.
     """
-    substitutions = {"以": "你", "顺应八平": "数影霸屏"}
+    substitutions = {"以": "你", "顺应八平": "霸屏"}
     raw_words = [
         word
         for segment in asr_payload.get("segments") or []
@@ -164,9 +164,9 @@ def _attach_real_word_timestamps(
             ):
                 source_words = raw_words[cursor : cursor + 4]
                 cursor += 4
-                normalized = "数影霸屏"
-                normalized_counts["顺应八平->数影霸屏"] = (
-                    normalized_counts.get("顺应八平->数影霸屏", 0) + 1
+                normalized = "霸屏"
+                normalized_counts["顺应八平->霸屏"] = (
+                    normalized_counts.get("顺应八平->霸屏", 0) + 1
                 )
                 text += normalized
                 collected.append(

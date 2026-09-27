@@ -495,7 +495,7 @@ describe("PipelinePage customer workspace", () => {
     vi.mocked(getCrawlerHotWords).mockResolvedValue({ words: [] });
     vi.mocked(getAvatarCapabilities).mockResolvedValue({
       provider_name: "shuying_legacy_cloud",
-      display_name: "公司数影云数字人",
+      display_name: "云端数字人服务",
       mode: "production",
       enabled: true,
       permission_status: "authorized",
@@ -911,7 +911,7 @@ describe("PipelinePage customer workspace", () => {
       authorized: true,
       preview_type: "video",
       status: "training",
-      status_message: "公司云端正在训练形象。",
+      status_message: "云端正在训练形象。",
       source_type: "cloud",
     });
 
@@ -929,7 +929,7 @@ describe("PipelinePage customer workspace", () => {
     fireEvent.change(fileInput!, { target: { files: [file] } });
 
     await waitFor(() => expect(trainCloudAvatar).toHaveBeenCalledWith({ file, name: "老板本人形象" }));
-    expect(await screen.findByText("公司云端正在训练形象。")).toBeTruthy();
+    expect(await screen.findByText("云端正在训练形象。")).toBeTruthy();
     expect(screen.getByText("正在准备的形象：老板本人形象。完成后即可选择。")).toBeTruthy();
   });
 
@@ -1001,7 +1001,7 @@ describe("PipelinePage customer workspace", () => {
     vi.mocked(getProductionWorkspaceConfiguration).mockResolvedValue({ configured: false });
     vi.mocked(getAvatarCapabilities).mockResolvedValue({
       provider_name: "shuying_legacy_cloud",
-      display_name: "公司数影云数字人",
+      display_name: "云端数字人服务",
       mode: "production",
       enabled: true,
       permission_status: "authorized",
