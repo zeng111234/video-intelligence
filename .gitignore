@@ -75,3 +75,4 @@ _diag_*.py
 
 # Shared-server bootstrap artifacts (machine-specific binaries and configs)
 /work/server-deploy-xmt/
+node_modules/
